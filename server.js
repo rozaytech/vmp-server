@@ -9,6 +9,10 @@ import billingRoutes from './routes/billingRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 
+// NOVO: Rotas POS
+import productRoutes from './routes/productRoutes.js';
+import saleRoutes from './routes/saleRoutes.js';
+
 const app = express();
 
 app.use(cors({
@@ -27,7 +31,7 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'VMP SaaS Control Plane Online',
-    version: '2.2.0',
+    version: '2.3.0',
     mode: 'enterprise-saas',
     services: {
       auth: true,
@@ -36,6 +40,8 @@ app.get('/', (req, res) => {
       finance: true,
       stats: true,
       public: true,
+      pos_products: true,
+      pos_sales: true,
     }
   });
 });
@@ -46,16 +52,21 @@ app.get('/health', (req, res) => {
     service: 'vmp-license-server',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    version: '2.2.0',
+    version: '2.3.0',
   });
 });
 
+// Rotas existentes
 app.use('/api/auth', authRoutes);
 app.use('/api/license', licenseRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/public', publicRoutes);
+
+// NOVO: Rotas POS
+app.use('/api/products', productRoutes);
+app.use('/api/sales', saleRoutes);
 
 app.get('/api/finance/overview', async (req, res) => {
   res.json({
@@ -79,4 +90,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`VMP SaaS Control Plane running on port ${PORT}`);
+  console.log(`POS API endpoints: /api/products, /api/sales`);
 });
