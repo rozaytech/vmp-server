@@ -4,7 +4,7 @@ import { initDB } from '../db.js';
 import { generateLicense } from '../services/licenseService.js';
 import { getSubscription } from '../services/billingService.js';
 import { initiatePayment, verifyPayment } from '../services/paymentService.js';
-import { sendEmail, trialStartedTemplate, paymentInstructionsTemplate } from '../services/emailService.js';
+import { sendEmail, trialStartedTemplate, paymentInstructionsTemplate } from '../services/emailService_sendgrid.js';
 
 const router = express.Router();
 

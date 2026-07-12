@@ -1,85 +1,60 @@
-import { Resend } from 'resend';
+import sgMail from '@sendgrid/mail';
 import { initDB } from '../db.js';
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'VMP SaaS <onboarding@resend.dev>';
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+const FROM_EMAIL = process.env.FROM_EMAIL || 'freelancer.adamgy@gmail.com';
 
-let resend = null;
-if (RESEND_API_KEY && !RESEND_API_KEY.includes('demo') && RESEND_API_KEY.startsWith('re_')) {
-  resend = new Resend(RESEND_API_KEY);
+if (SENDGRID_API_KEY && !SENDGRID_API_KEY.includes('demo')) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
 }
 
 // =========================================================
 // SEND EMAIL
 // =========================================================
 export async function sendEmail({ to, subject, body, html }) {
-  // 1. Validação básica
-  if (!to || !subject) {
-    const err = 'Destinatário ou assunto em falta';
-    await logEmail(to || 'unknown', subject || 'unknown', body, 'failed', err);
-    return { success: false, status: 'failed', error: err };
-  }
+  try {
+    if (!SENDGRID_API_KEY || SENDGRID_API_KEY.includes('demo')) {
+      console.log('[EMAIL MOCK] SendGrid não configurado.');
+      console.log('Para:', to, '| Assunto:', subject);
+      await logEmail(to, subject, body, 'mock_no_api_key', 'API key não configurada');
+      return {
+        success: false,
+        status: 'mock',
+        message: 'Email simulado (API key não configurada)',
+      };
+    }
 
-  // 2. Sem API key → mock mode
-  if (!resend) {
-    console.log('[EMAIL MOCK] Resend não configurado. Email não enviado.');
-    console.log('Para:', to);
-    console.log('Assunto:', subject);
-    await logEmail(to, subject, body, 'mock_no_api_key', 'API key não configurada');
+    const msg = {
+      to,
+      from: { email: FROM_EMAIL, name: 'VMP SaaS' },
+      subject,
+      text: body,
+      html: html || body?.replace(/\n/g, '<br>') || '',
+    };
+
+    const [response] = await sgMail.send(msg);
+
+    const messageId = response?.headers?.['x-message-id'] || 'unknown';
+
+    console.log('[EMAIL ENVIADO]', messageId, '→', to);
+    await logEmail(to, subject, body, 'sent', null, messageId);
+
+    return {
+      success: true,
+      messageId,
+      status: 'sent',
+    };
+  } catch (error) {
+    const errMsg = error.response?.body?.errors?.[0]?.message || error.message;
+    console.error('[EMAIL ERROR]', errMsg);
+    await logEmail(to, subject, body, 'failed', errMsg);
+
     return {
       success: false,
-      status: 'mock',
-      message: 'Email simulado (API key não configurada)',
+      status: 'failed',
+      error: errMsg,
     };
   }
-
-  // 3. Retry com 2 tentativas
-  let lastError = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const data = await resend.emails.send({
-        from: FROM_EMAIL,
-        to: [to],
-        subject: subject,
-        text: body,
-        html: html || body?.replace(/\n/g, '<br>') || '',
-      });
-
-      // Resend retorna { data: { id }, error: null } ou { data: null, error: { message } }
-      if (data.error) {
-        throw new Error(data.error.message || 'Erro desconhecido do Resend');
-      }
-
-      if (!data.data || !data.data.id) {
-        throw new Error('Resend não retornou message ID');
-      }
-
-      console.log('[EMAIL ENVIADO]', data.data.id, '→', to);
-      await logEmail(to, subject, body, 'sent', null, data.data.id);
-
-      return {
-        success: true,
-        messageId: data.data.id,
-        status: 'sent',
-      };
-    } catch (error) {
-      lastError = error;
-      console.error(`[EMAIL ERROR] Tentativa ${attempt}:`, error.message);
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 1000)); // espera 1s antes de retry
-      }
-    }
-  }
-
-  // 4. Todas as tentativas falharam
-  console.error('[EMAIL FAILED] Todas as tentativas falharam para:', to);
-  await logEmail(to, subject, body, 'failed', lastError?.message);
-
-  return {
-    success: false,
-    status: 'failed',
-    error: lastError?.message || 'Falha ao enviar email',
-  };
 }
 
 // =========================================================
@@ -107,7 +82,7 @@ async function logEmail(to, subject, body, status, errorMessage = null, messageI
 }
 
 // =========================================================
-// TEMPLATES
+// TEMPLATES (iguais ao Resend, reutilizáveis)
 // =========================================================
 export function licenseApprovedTemplate(clientEmail, licenseKey, plan, expiryDate) {
   return {
@@ -139,21 +114,17 @@ Equipa VMP`,
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f8f9fa;">
         <div style="background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
           <h2 style="color: #2e7d32; margin-top: 0;">✅ Licença VMP Aprovada</h2>
-          
           <p>Olá,</p>
           <p>A sua licença foi aprovada com sucesso!</p>
-          
           <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
             <p style="margin: 8px 0;"><strong>Plano:</strong> ${plan}</p>
             <p style="margin: 8px 0;"><strong>Validade:</strong> ${new Date(expiryDate).toLocaleDateString('pt-PT')}</p>
             <p style="margin: 8px 0;"><strong>Email:</strong> ${clientEmail}</p>
           </div>
-          
           <p><strong>🔑 Chave de Ativação:</strong></p>
           <div style="background: #e8f5e9; padding: 16px; border-radius: 8px; word-break: break-all; font-family: monospace; font-size: 13px; border: 1px dashed #4caf50;">
             ${licenseKey}
           </div>
-          
           <div style="margin-top: 24px; padding: 16px; background: #e3f2fd; border-radius: 8px;">
             <p style="margin: 0 0 12px; font-weight: bold;">📲 Como Ativar:</p>
             <ol style="margin: 0; padding-left: 20px;">
@@ -162,13 +133,11 @@ Equipa VMP`,
               <li>Clique em "Ativar com Licença"</li>
             </ol>
           </div>
-          
           <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #eee;">
             <p style="margin: 0 0 8px; font-weight: bold;">💬 Suporte:</p>
             <p style="margin: 4px 0;">• WhatsApp: <a href="https://wa.me/258846166104" style="color: #25d366;">846166104</a></p>
             <p style="margin: 4px 0;">• Email: <a href="mailto:freelancer.adamgy@gmail.com" style="color: #1976d2;">freelancer.adamgy@gmail.com</a></p>
           </div>
-          
           <p style="margin-top: 24px; color: #666; font-size: 13px;">Obrigado por escolher VMP SaaS!<br>Equipa VMP</p>
         </div>
       </div>

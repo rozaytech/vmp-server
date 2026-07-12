@@ -1,7 +1,7 @@
 import express from 'express';
 import { initDB } from '../db.js';
 import { generateLicense } from '../services/licenseService.js';
-import { sendEmail, licenseApprovedTemplate } from '../services/emailService.js';
+import { sendEmail, licenseApprovedTemplate } from '../services/emailService_sendgrid.js';
 
 const router = express.Router();
 
