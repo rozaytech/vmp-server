@@ -1,77 +1,43 @@
 import express from "express";
 import {
   createSubscription,
-  getSubscription,
-  simulatePayment
-} from "../services/billingService.js";
+  listSubscriptions,
+  simulatePayment,
+  listPayments,
+  getBillingStats,
+  getSubscriptionById,
+} from "../controllers/billingController.js";
 
 const router = express.Router();
 
 // =========================================================
 // CREATE SUBSCRIPTION
 // =========================================================
-router.post("/create", async (req, res) => {
-  try {
-    const { client, email, plan } = req.body;
-
-    if (!client || !plan) {
-      return res.status(400).json({
-        error: "missing_fields"
-      });
-    }
-
-    const result = await createSubscription({
-      client,
-      email,
-      plan
-    });
-
-    return res.json(result);
-
-  } catch (e) {
-    return res.status(500).json({
-      error: "server_error",
-      details: e.message
-    });
-  }
-});
+router.post("/create", createSubscription);
 
 // =========================================================
-// CHECK SUBSCRIPTION
+// LIST SUBSCRIPTIONS (com filtro ?status=)
 // =========================================================
-router.get("/status/:client", async (req, res) => {
-  try {
-    const result = await getSubscription(req.params.client);
-    return res.json(result);
-  } catch (e) {
-    return res.status(500).json({
-      error: "server_error"
-    });
-  }
-});
+router.get("/subscriptions", listSubscriptions);
+
+// =========================================================
+// GET SUBSCRIPTION BY ID
+// =========================================================
+router.get("/subscription/:id", getSubscriptionById);
+
+// =========================================================
+// LIST PAYMENTS
+// =========================================================
+router.get("/payments", listPayments);
 
 // =========================================================
 // SIMULATE PAYMENT
 // =========================================================
-router.post("/pay", async (req, res) => {
-  try {
-    const { subscriptionId } = req.body;
+router.post("/pay", simulatePayment);
 
-    if (!subscriptionId) {
-      return res.status(400).json({
-        error: "missing_subscription_id"
-      });
-    }
-
-    const result = await simulatePayment(subscriptionId);
-
-    return res.json(result);
-
-  } catch (e) {
-    return res.status(500).json({
-      error: "server_error"
-    });
-  }
-});
+// =========================================================
+// BILLING STATS
+// =========================================================
+router.get("/stats", getBillingStats);
 
 export default router;

@@ -1,15 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 import { initDB } from '../db.js';
+import { PLANS } from '../billing/plans.js';
 
 // =========================================================
-// CREATE SUBSCRIPTION
+// CREATE SUBSCRIPTION (usado por outros servicos)
 // =========================================================
-export async function createSubscription({ client, email, plan, days, isTrial = false }) {
+export async function createSubscription({ client, email, plan, days, isTrial = false, autoRenew = false }) {
   const db = await initDB();
   const now = new Date();
   const expiry = new Date();
 
-  const durationDays = days || (isTrial ? 7 : 30);
+  const planConfig = PLANS[plan];
+  const durationDays = days || (isTrial ? 7 : (planConfig?.days || 30));
   expiry.setDate(expiry.getDate() + durationDays);
 
   const id = uuidv4();
@@ -19,17 +21,10 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
   await db.run(
     `
     INSERT INTO subscriptions (
-      id,
-      client,
-      email,
-      plan,
-      status,
-      start_date,
-      expiry_date,
-      payment_status,
-      created_at
+      id, client, email, plan, status, start_date, expiry_date,
+      payment_status, auto_renew, created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       id,
@@ -40,6 +35,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
       now.toISOString(),
       expiry.toISOString(),
       paymentStatus,
+      autoRenew ? 1 : 0,
       now.toISOString(),
     ]
   );
@@ -55,6 +51,8 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
       startDate: now.toISOString(),
       endDate: expiry.toISOString(),
       paymentStatus,
+      days: durationDays,
+      price: planConfig?.price || 0,
     },
   };
 }
@@ -66,13 +64,7 @@ export async function getSubscription(client) {
   const db = await initDB();
 
   const row = await db.get(
-    `
-    SELECT *
-    FROM subscriptions
-    WHERE client = ?
-    ORDER BY created_at DESC
-    LIMIT 1
-    `,
+    `SELECT * FROM subscriptions WHERE client = ? ORDER BY created_at DESC LIMIT 1`,
     [client]
   );
 
@@ -85,12 +77,14 @@ export async function getSubscription(client) {
 
   const now = new Date();
   const endDate = new Date(row.expiry_date);
+  const daysLeft = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
 
   if (row.status !== 'active' && row.status !== 'trial') {
     return {
       active: false,
       reason: 'subscription_inactive',
       subscription: row,
+      daysLeft: daysLeft > 0 ? daysLeft : 0,
     };
   }
 
@@ -100,33 +94,34 @@ export async function getSubscription(client) {
         active: false,
         reason: 'trial_expired',
         subscription: row,
+        daysLeft: 0,
       };
     }
     return {
       active: false,
       reason: 'subscription_expired',
       subscription: row,
+      daysLeft: 0,
     };
   }
 
   return {
     active: true,
     subscription: row,
+    daysLeft: daysLeft > 0 ? daysLeft : 0,
+    plan: row.plan,
+    features: PLANS[row.plan]?.features || [],
   };
 }
 
 // =========================================================
 // SIMULATE PAYMENT
 // =========================================================
-export async function simulatePayment(subscriptionId) {
+export async function simulatePayment(subscriptionId, amount) {
   const db = await initDB();
 
   const sub = await db.get(
-    `
-    SELECT *
-    FROM subscriptions
-    WHERE id = ?
-    `,
+    `SELECT * FROM subscriptions WHERE id = ?`,
     [subscriptionId]
   );
 
@@ -137,12 +132,11 @@ export async function simulatePayment(subscriptionId) {
     };
   }
 
+  const planConfig = PLANS[sub.plan];
+  const paymentAmount = amount || planConfig?.price || 99.99;
+
   await db.run(
-    `
-    UPDATE subscriptions
-    SET payment_status = 'paid'
-    WHERE id = ?
-    `,
+    `UPDATE subscriptions SET payment_status = 'paid' WHERE id = ?`,
     [subscriptionId]
   );
 
@@ -151,15 +145,8 @@ export async function simulatePayment(subscriptionId) {
   await db.run(
     `
     INSERT INTO payments (
-      id,
-      subscription_id,
-      client,
-      amount,
-      currency,
-      provider,
-      status,
-      reference,
-      created_at
+      id, subscription_id, client, amount, currency,
+      provider, status, reference, created_at
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
@@ -167,10 +154,10 @@ export async function simulatePayment(subscriptionId) {
       paymentId,
       subscriptionId,
       sub.client,
-      99.99,
-      'EUR',
+      paymentAmount,
+      'MZN',
       'manual',
-      'completed',
+      'success',
       'SIM-' + Date.now(),
       new Date().toISOString(),
     ]
@@ -180,6 +167,22 @@ export async function simulatePayment(subscriptionId) {
     success: true,
     paymentId,
     subscriptionId,
+    amount: paymentAmount,
+    currency: 'MZN',
     status: 'paid',
   };
+}
+
+// =========================================================
+// CHECK FEATURE AVAILABILITY
+// =========================================================
+export function hasFeature(planCode, feature) {
+  return PLANS[planCode]?.features?.includes(feature) || false;
+}
+
+// =========================================================
+// GET PLAN INFO
+// =========================================================
+export function getPlanInfo(planCode) {
+  return PLANS[planCode] || null;
 }
