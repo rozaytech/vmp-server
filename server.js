@@ -277,7 +277,7 @@ app.get('/api/public/plans', (req, res) => {
     plans: {
       basic: {
         name: 'Basic',
-        price: 1500,
+        price: 3500,
         days: 30,
         maxUsers: 2,
         maxProducts: 500,
@@ -285,7 +285,7 @@ app.get('/api/public/plans', (req, res) => {
       },
       pro: {
         name: 'Pro',
-        price: 3500,
+        price: 7000,
         days: 30,
         maxUsers: 5,
         maxProducts: 5000,
@@ -293,7 +293,7 @@ app.get('/api/public/plans', (req, res) => {
       },
       enterprise: {
         name: 'Enterprise',
-        price: 8500,
+        price: 150000,
         days: 365,
         maxUsers: 999,
         maxProducts: 99999,

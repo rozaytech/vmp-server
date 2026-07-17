@@ -262,4 +262,17 @@ router.post('/payment/verify', async (req, res) => {
   }
 });
 
+// =========================================================
+// VERSION CHECK (Auto-Update)
+// =========================================================
+router.get('/version', (req, res) => {
+  res.json({
+    version: '2.3.1',
+    downloadUrl: 'https://vmp-landing.vercel.app/download',
+    releaseNotes: 'Correcoes de bugs, feature flags, painel remoto, transferencia de licencas',
+    forceUpdate: false,
+    minimumVersion: '2.0.0',
+  });
+});
+
 export default router;
