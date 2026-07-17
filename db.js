@@ -36,6 +36,13 @@ export async function initDB() {
     console.log('[MIGRATION] Adicionada coluna subscription_id à tabela licenses');
   }
 
+  // NOVO: Adicionar coluna remote_pin às licenses (para acesso remoto)
+  const hasRemotePin = licenseColumns.some(col => col.name === 'remote_pin');
+  if (!hasRemotePin) {
+    await db.exec(`ALTER TABLE licenses ADD COLUMN remote_pin TEXT`);
+    console.log('[MIGRATION] Adicionada coluna remote_pin à tabela licenses');
+  }
+
   await db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY,
@@ -130,6 +137,32 @@ export async function initDB() {
       sent_at TEXT,
       created_at TEXT NOT NULL
     );
+  `);
+
+  // =========================================================
+  // NOVA TABELA: Tokens de Acesso Remoto
+  // =========================================================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_access_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      license_id TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      pin_hash TEXT NOT NULL,
+      device_info TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT,
+      is_revoked INTEGER DEFAULT 0,
+      FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
+    );
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_remote_tokens_license ON remote_access_tokens(license_id);
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_remote_tokens_token ON remote_access_tokens(token);
   `);
 
   // =========================================================
@@ -282,7 +315,7 @@ export async function initDB() {
   // =========================================================
   // MIGRATIONS & SEED DATA
   // =========================================================
-  
+
   // Seed: Warehouse padrão
   const warehouseCount = await db.get(`SELECT COUNT(*) as count FROM warehouses`);
   if (warehouseCount.count === 0) {
