@@ -8,16 +8,15 @@ import authRoutes from './routes/authRoutes.js';
 import billingRoutes from './routes/billingRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
-import remoteRoutes from './routes/remoteRoutes.js'; // NOVO: Dashboard remoto
+import remoteRoutes from './routes/remoteRoutes.js';
 
 // Rotas POS
 import productRoutes from './routes/productRoutes.js';
 import saleRoutes from './routes/saleRoutes.js';
 
-// =========================================================
-// IMPORTS ADICIONAIS (NOVOS)
-// =========================================================
+// NOVO: Imports para rotas diretas no server
 import { getSubscriptionByEmail } from "./services/billingService.js";
+import { initDB } from './db.js';
 
 const app = express();
 
@@ -73,12 +72,12 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/public', publicRoutes);
-app.use('/api/remote', remoteRoutes); // NOVO: Dashboard remoto com auth
+app.use('/api/remote', remoteRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
 
 // =========================================================
-// BILLING STATUS POR EMAIL (NOVO — corrige 404 /api/billing/status/:email)
+// BILLING STATUS POR EMAIL (NOVO)
 // =========================================================
 app.get("/api/billing/status/:email", async (req, res) => {
   try {
@@ -104,15 +103,25 @@ app.get("/api/billing/status/:email", async (req, res) => {
 });
 
 // =========================================================
-// ADMIN ACTIVATION REQUESTS (NOVO — corrige aprovacao no painel)
+// ADMIN ACTIVATION REQUESTS (NOVO — diretamente no server.js)
 // =========================================================
 
 // GET /api/admin/activation-requests
 app.get("/api/admin/activation-requests", async (req, res) => {
   try {
     const { status } = req.query;
-    const { initDB } = await import('./db.js');
     const db = await initDB();
+
+    // CORRECAO: verificar se tabela existe
+    try {
+      await db.get(`SELECT 1 FROM activation_requests LIMIT 1`);
+    } catch (tableErr) {
+      console.error("ACTIVATION_REQUESTS TABLE NOT FOUND:", tableErr.message);
+      return res.status(500).json({
+        error: "table_not_found",
+        message: "Tabela activation_requests nao existe. Execute a migracao.",
+      });
+    }
 
     let whereClause = "1=1";
     const args = [];
@@ -135,7 +144,7 @@ app.get("/api/admin/activation-requests", async (req, res) => {
 
   } catch (e) {
     console.error("LIST ACTIVATION REQUESTS ERROR:", e);
-    return res.status(500).json({ error: "server_error" });
+    return res.status(500).json({ error: "server_error", details: e.message });
   }
 });
 
@@ -145,7 +154,6 @@ app.post("/api/admin/activation-requests/:id/approve", async (req, res) => {
     const { id } = req.params;
     const { adminEmail } = req.body;
 
-    const { initDB } = await import('./db.js');
     const db = await initDB();
 
     // Buscar pedido
@@ -171,7 +179,7 @@ app.post("/api/admin/activation-requests/:id/approve", async (req, res) => {
       request.machine_id,
       request.client_email,
       request.plan,
-      null
+      null  // usa dias do plano
     );
 
     // Atualizar pedido
@@ -222,7 +230,6 @@ app.post("/api/admin/activation-requests/:id/reject", async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
 
-    const { initDB } = await import('./db.js');
     const db = await initDB();
 
     const request = await db.get(
@@ -256,6 +263,7 @@ app.post("/api/admin/activation-requests/:id/reject", async (req, res) => {
     console.error("REJECT REQUEST ERROR:", e);
     return res.status(500).json({
       error: "server_error",
+      details: e.message,
     });
   }
 });
@@ -265,7 +273,6 @@ app.post("/api/admin/activation-requests/:id/reject", async (req, res) => {
 // =========================================================
 app.get('/api/finance/overview', async (req, res) => {
   try {
-    const { initDB } = await import('./db.js');
     const db = await initDB();
 
     const todayRevenue = await db.get(`
@@ -368,7 +375,7 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('SERVER_ERROR:', err);
-  res.status(500).json({ error: 'internal_server_error' });
+  res.status(500).json({ error: 'internal_server_error', details: err.message });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -381,11 +388,72 @@ app.listen(PORT, () => {
   console.log(`  - Admin:          /api/admin`);
   console.log(`  - Stats:          /api/stats`);
   console.log(`  - Public:         /api/public`);
-  console.log(`  - Remote:         /api/remote/*  (NOVO: auth + dashboard)`);
+  console.log(`  - Remote:         /api/remote/*`);
   console.log(`  - POS Products:   /api/products`);
   console.log(`  - POS Sales:      /api/sales`);
-  console.log(`  - Billing Status: /api/billing/status/:email  (NOVO)`);
-  console.log(`  - Admin Requests: /api/admin/activation-requests  (NOVO)`);
+  console.log(`  - Billing Status: /api/billing/status/:email`);
+  console.log(`  - Admin Requests: /api/admin/activation-requests`);
 });
+
+// =========================================================
+// NOVO: Verificar/criar tabela activation_requests no startup
+// =========================================================
+(async () => {
+  try {
+    const db = await initDB();
+    
+    // Verificar se tabela activation_requests existe
+    const tableExists = await db.get(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='activation_requests'
+    `);
+
+    if (!tableExists) {
+      console.log("CRIANDO TABELA activation_requests...");
+      await db.exec(`
+        CREATE TABLE activation_requests (
+          id TEXT PRIMARY KEY,
+          machine_id TEXT NOT NULL,
+          client_email TEXT NOT NULL,
+          plan TEXT NOT NULL,
+          type TEXT DEFAULT 'remote',
+          status TEXT DEFAULT 'pending',
+          license_id TEXT,
+          created_at TEXT NOT NULL,
+          approved_at TEXT,
+          approved_by TEXT,
+          rejected_at TEXT,
+          rejection_reason TEXT
+        )
+      `);
+      console.log("TABELA activation_requests CRIADA COM SUCESSO");
+    } else {
+      console.log("TABELA activation_requests JA EXISTE");
+    }
+
+    // Verificar se tabela license_logs existe
+    const logsExists = await db.get(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='license_logs'
+    `);
+
+    if (!logsExists) {
+      console.log("CRIANDO TABELA license_logs...");
+      await db.exec(`
+        CREATE TABLE license_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          license_id TEXT,
+          machine_id TEXT,
+          action TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `);
+      console.log("TABELA license_logs CRIADA COM SUCESSO");
+    }
+
+  } catch (e) {
+    console.error("ERRO AO VERIFICAR/criar tabelas:", e);
+  }
+})();
 
 export default app;

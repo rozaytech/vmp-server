@@ -29,7 +29,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
     [
       id,
       client,
-      email || null,
+      email || client,  // CORRECAO: garantir que email tem valor
       plan,
       status,
       now.toISOString(),
@@ -45,7 +45,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
     subscription: {
       id,
       client,
-      email,
+      email: email || client,
       plan,
       status,
       startDate: now.toISOString(),
@@ -116,14 +116,24 @@ export async function getSubscription(client) {
 
 // =========================================================
 // GET SUBSCRIPTION BY EMAIL (novo — para /api/billing/status/:email)
+// CORRECAO: procura por email OU client (fallback)
 // =========================================================
 export async function getSubscriptionByEmail(email) {
   const db = await initDB();
 
-  const row = await db.get(
+  // CORRECAO: procurar primeiro por email, depois por client (fallback)
+  let row = await db.get(
     `SELECT * FROM subscriptions WHERE email = ? ORDER BY created_at DESC LIMIT 1`,
     [email]
   );
+
+  // Se nao encontrou por email, tentar por client
+  if (!row) {
+    row = await db.get(
+      `SELECT * FROM subscriptions WHERE client = ? ORDER BY created_at DESC LIMIT 1`,
+      [email]
+    );
+  }
 
   if (!row) {
     return {

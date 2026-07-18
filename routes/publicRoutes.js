@@ -10,6 +10,7 @@ const router = express.Router();
 
 // =========================================================
 // START TRIAL
+// CORRECAO: generateLicense agora aceita 5 args, retorna subscription.endDate
 // =========================================================
 router.post('/trial/start', async (req, res) => {
   try {
@@ -22,16 +23,20 @@ router.post('/trial/start', async (req, res) => {
       });
     }
 
+    // CORRECAO: passar isTrial=true como 5o argumento
     const result = await generateLicense(machineId, email, plan, 7, true);
 
-    // Enviar email mock
+    // CORRECAO: usar result.subscription.endDate (agora existe)
     const template = trialStartedTemplate(email, 7, result.subscription.endDate);
     await sendEmail({ to: email, ...template });
 
     return res.json({
       success: true,
-      license: result.license,
+      license: result.licenseKey,        // CORRECAO: licenseKey em vez de license
+      licenseKey: result.licenseKey,     // backward compatibility
       subscription: result.subscription,
+      endDate: result.subscription.endDate,  // CORRECAO: endDate para o app
+      expiry: result.subscription.endDate,   // backward compatibility
       message: 'Trial de 7 dias iniciado com sucesso',
     });
 
@@ -90,8 +95,7 @@ router.get('/trial/status/:machineId', async (req, res) => {
 });
 
 // =========================================================
-// REQUEST LICENSE (REMOTE ACTIVATION) — CORRIGIDO
-// Agora cria pedido PENDENTE, não gera licença automaticamente
+// REQUEST LICENSE (REMOTE ACTIVATION)
 // =========================================================
 router.post('/license/request', async (req, res) => {
   try {
@@ -267,7 +271,7 @@ router.post('/payment/verify', async (req, res) => {
 // =========================================================
 router.get('/version', (req, res) => {
   res.json({
-    version: '2.3.1',
+    version: '2.3.2',
     downloadUrl: 'https://vmp-landing.vercel.app/download',
     releaseNotes: 'Correcoes de bugs, feature flags, painel remoto, transferencia de licencas',
     forceUpdate: false,

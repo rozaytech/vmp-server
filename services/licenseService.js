@@ -18,7 +18,10 @@ function generateLicenseKey(machineId, plan, expiry, subscriptionId) {
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 
-export async function generateLicense(machineId, client, plan, customDays) {
+// =========================================================
+// CORRECAO: adicionado parametro isTrial (5o parametro)
+// =========================================================
+export async function generateLicense(machineId, client, plan, customDays, isTrial = false) {
   const db = await initDB();
 
   const planConfig = PLANS[plan];
@@ -34,6 +37,9 @@ export async function generateLicense(machineId, client, plan, customDays) {
   const subscriptionId = uuidv4();
   const licenseId = uuidv4();
 
+  // CORRECAO: usar email como client se for trial, e guardar email na subscricao
+  const email = client.includes('@') ? client : null;
+
   // Criar subscrição
   await db.run(
     `INSERT INTO subscriptions (
@@ -42,13 +48,13 @@ export async function generateLicense(machineId, client, plan, customDays) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       subscriptionId,
-      client,
-      null,
+      client,           // CORRECAO: guardar client/email aqui
+      email || client,  // CORRECAO: garantir que email tem valor para billing lookup
       plan,
-      "active",
+      isTrial ? 'trial' : 'active',
       now.toISOString(),
       expiry.toISOString(),
-      "pending",
+      isTrial ? 'trial' : 'pending',
       0,
       now.toISOString(),
     ]
@@ -77,9 +83,10 @@ export async function generateLicense(machineId, client, plan, customDays) {
   // Log
   await db.run(
     `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
-    [licenseId, machineId, "generated", now.toISOString()]
+    [licenseId, machineId, isTrial ? "trial_generated" : "generated", now.toISOString()]
   );
 
+  // CORRECAO: retornar subscription com endDate (compativel com billingService)
   return {
     licenseId,
     subscriptionId,
@@ -88,6 +95,18 @@ export async function generateLicense(machineId, client, plan, customDays) {
     expiry: expiry.toISOString(),
     days,
     features: getPlanFeatures(plan),
+    subscription: {
+      id: subscriptionId,
+      client,
+      email: email || client,
+      plan,
+      status: isTrial ? 'trial' : 'active',
+      startDate: now.toISOString(),
+      endDate: expiry.toISOString(),  // CORRECAO: endDate para compatibilidade
+      paymentStatus: isTrial ? 'trial' : 'pending',
+      days,
+      price: planConfig?.price || 0,
+    },
   };
 }
 
