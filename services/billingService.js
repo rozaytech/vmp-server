@@ -58,7 +58,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
 }
 
 // =========================================================
-// GET SUBSCRIPTION
+// GET SUBSCRIPTION (por client/name)
 // =========================================================
 export async function getSubscription(client) {
   const db = await initDB();
@@ -66,6 +66,63 @@ export async function getSubscription(client) {
   const row = await db.get(
     `SELECT * FROM subscriptions WHERE client = ? ORDER BY created_at DESC LIMIT 1`,
     [client]
+  );
+
+  if (!row) {
+    return {
+      active: false,
+      reason: 'no_subscription',
+    };
+  }
+
+  const now = new Date();
+  const endDate = new Date(row.expiry_date);
+  const daysLeft = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
+
+  if (row.status !== 'active' && row.status !== 'trial') {
+    return {
+      active: false,
+      reason: 'subscription_inactive',
+      subscription: row,
+      daysLeft: daysLeft > 0 ? daysLeft : 0,
+    };
+  }
+
+  if (now > endDate) {
+    if (row.status === 'trial') {
+      return {
+        active: false,
+        reason: 'trial_expired',
+        subscription: row,
+        daysLeft: 0,
+      };
+    }
+    return {
+      active: false,
+      reason: 'subscription_expired',
+      subscription: row,
+      daysLeft: 0,
+    };
+  }
+
+  return {
+    active: true,
+    subscription: row,
+    daysLeft: daysLeft > 0 ? daysLeft : 0,
+    plan: row.plan,
+    features: PLANS[row.plan]?.features || [],
+  };
+}
+
+// =========================================================
+// GET SUBSCRIPTION BY EMAIL (novo — para /api/billing/status/:email)
+// =========================================================
+export async function getSubscriptionByEmail(email) {
+  const db = await initDB();
+
+  const row = await db.get(
+    `SELECT * FROM subscriptions WHERE email = ? ORDER BY created_at DESC LIMIT 1`,
+    [email]
   );
 
   if (!row) {
