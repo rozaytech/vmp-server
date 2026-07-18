@@ -14,7 +14,7 @@ import remoteRoutes from './routes/remoteRoutes.js';
 import productRoutes from './routes/productRoutes.js';
 import saleRoutes from './routes/saleRoutes.js';
 
-// NOVO: Imports para rotas diretas no server
+// Import para rota direta no server (nao esta em nenhum router)
 import { getSubscriptionByEmail } from "./services/billingService.js";
 import { initDB } from './db.js';
 
@@ -68,7 +68,7 @@ app.get('/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/licenses', licenseRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminRoutes);        // activation-requests esta aqui dentro
 app.use('/api/billing', billingRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/public', publicRoutes);
@@ -77,7 +77,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
 
 // =========================================================
-// BILLING STATUS POR EMAIL (NOVO)
+// BILLING STATUS POR EMAIL (unica rota direta no server)
 // =========================================================
 app.get("/api/billing/status/:email", async (req, res) => {
   try {
@@ -95,172 +95,6 @@ app.get("/api/billing/status/:email", async (req, res) => {
 
   } catch (e) {
     console.error("BILLING STATUS ERROR:", e);
-    return res.status(500).json({
-      error: "server_error",
-      details: e.message,
-    });
-  }
-});
-
-// =========================================================
-// ADMIN ACTIVATION REQUESTS (NOVO — diretamente no server.js)
-// =========================================================
-
-// GET /api/admin/activation-requests
-app.get("/api/admin/activation-requests", async (req, res) => {
-  try {
-    const { status } = req.query;
-    const db = await initDB();
-
-    // CORRECAO: verificar se tabela existe
-    try {
-      await db.get(`SELECT 1 FROM activation_requests LIMIT 1`);
-    } catch (tableErr) {
-      console.error("ACTIVATION_REQUESTS TABLE NOT FOUND:", tableErr.message);
-      return res.status(500).json({
-        error: "table_not_found",
-        message: "Tabela activation_requests nao existe. Execute a migracao.",
-      });
-    }
-
-    let whereClause = "1=1";
-    const args = [];
-
-    if (status && status !== 'all') {
-      whereClause += " AND status = ?";
-      args.push(status);
-    }
-
-    const requests = await db.all(
-      `SELECT * FROM activation_requests WHERE ${whereClause} ORDER BY created_at DESC`,
-      args
-    );
-
-    return res.json({
-      success: true,
-      requests,
-      count: requests.length,
-    });
-
-  } catch (e) {
-    console.error("LIST ACTIVATION REQUESTS ERROR:", e);
-    return res.status(500).json({ error: "server_error", details: e.message });
-  }
-});
-
-// POST /api/admin/activation-requests/:id/approve
-app.post("/api/admin/activation-requests/:id/approve", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { adminEmail } = req.body;
-
-    const db = await initDB();
-
-    // Buscar pedido
-    const request = await db.get(
-      `SELECT * FROM activation_requests WHERE id = ?`,
-      [id]
-    );
-
-    if (!request) {
-      return res.status(404).json({ error: "request_not_found" });
-    }
-
-    if (request.status !== 'pending') {
-      return res.status(400).json({
-        error: "already_processed",
-        message: `Pedido ja esta ${request.status}`,
-      });
-    }
-
-    // Gerar licenca
-    const { generateLicense } = await import('./services/licenseService.js');
-    const result = await generateLicense(
-      request.machine_id,
-      request.client_email,
-      request.plan,
-      null  // usa dias do plano
-    );
-
-    // Atualizar pedido
-    const now = new Date().toISOString();
-    await db.run(
-      `UPDATE activation_requests SET status = ?, license_id = ?, approved_at = ?, approved_by = ? WHERE id = ?`,
-      ['approved', result.licenseId, now, adminEmail || 'admin', id]
-    );
-
-    // Log
-    await db.run(
-      `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
-      [result.licenseId, request.machine_id, "approved_remote", now]
-    );
-
-    // Enviar email com a licenca (se SendGrid configurado)
-    try {
-      const { sendEmail, licenseApprovedTemplate } = await import('./services/emailService_sendgrid.js');
-      const template = licenseApprovedTemplate(request.client_email, result.licenseKey, result.plan, result.expiry);
-      await sendEmail({ to: request.client_email, ...template });
-    } catch (emailErr) {
-      console.log("EMAIL SEND SKIPPED:", emailErr.message);
-    }
-
-    return res.json({
-      success: true,
-      message: "Licenca aprovada e gerada com sucesso",
-      license: {
-        licenseId: result.licenseId,
-        licenseKey: result.licenseKey,
-        plan: result.plan,
-        expiry: result.expiry,
-      },
-    });
-
-  } catch (e) {
-    console.error("APPROVE REQUEST ERROR:", e);
-    return res.status(500).json({
-      error: "server_error",
-      details: e.message,
-    });
-  }
-});
-
-// POST /api/admin/activation-requests/:id/reject
-app.post("/api/admin/activation-requests/:id/reject", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    const db = await initDB();
-
-    const request = await db.get(
-      `SELECT * FROM activation_requests WHERE id = ?`,
-      [id]
-    );
-
-    if (!request) {
-      return res.status(404).json({ error: "request_not_found" });
-    }
-
-    if (request.status !== 'pending') {
-      return res.status(400).json({
-        error: "already_processed",
-        message: `Pedido ja esta ${request.status}`,
-      });
-    }
-
-    const now = new Date().toISOString();
-    await db.run(
-      `UPDATE activation_requests SET status = ?, rejected_at = ?, rejection_reason = ? WHERE id = ?`,
-      ['rejected', now, reason || 'Sem motivo', id]
-    );
-
-    return res.json({
-      success: true,
-      message: "Pedido rejeitado",
-    });
-
-  } catch (e) {
-    console.error("REJECT REQUEST ERROR:", e);
     return res.status(500).json({
       error: "server_error",
       details: e.message,
@@ -392,11 +226,10 @@ app.listen(PORT, () => {
   console.log(`  - POS Products:   /api/products`);
   console.log(`  - POS Sales:      /api/sales`);
   console.log(`  - Billing Status: /api/billing/status/:email`);
-  console.log(`  - Admin Requests: /api/admin/activation-requests`);
 });
 
 // =========================================================
-// NOVO: Verificar/criar tabela activation_requests no startup
+// Verificar/criar tabelas no startup
 // =========================================================
 (async () => {
   try {

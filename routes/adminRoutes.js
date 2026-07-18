@@ -10,8 +10,6 @@ const router = express.Router();
 // Em produção: usar JWT middleware
 // =========================================================
 router.use((req, res, next) => {
-  // Mock: aceitar tudo para demo
-  // Em produção: verificar req.headers.authorization
   next();
 });
 
@@ -93,7 +91,7 @@ router.get('/activation-requests', async (req, res) => {
 });
 
 // =========================================================
-// APPROVE REQUEST
+// APPROVE REQUEST — CORRIGIDO
 // =========================================================
 router.post('/activation-requests/:id/approve', async (req, res) => {
   try {
@@ -114,35 +112,46 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
       });
     }
 
+    // CORRECAO: generateLicense agora aceita 5 args, passar null para isTrial
     const result = await generateLicense(
       request.machine_id,
       request.client_email,
       request.plan,
-      365
+      365,
+      false // isTrial = false para aprovacao manual
     );
 
-    const licenseData = JSON.parse(
-      Buffer.from(result.license, 'base64').toString()
-    );
-    const licenseId = licenseData.payload.id;
+    // CORRECAO: validar retorno
+    if (!result || !result.licenseKey) {
+      console.error('GENERATE LICENSE RETURNED INVALID:', result);
+      return res.status(500).json({
+        error: 'license_generation_failed',
+        message: 'Falha ao gerar licenca',
+      });
+    }
+
+    // CORRECAO: usar result.licenseId (UUID) em vez de fazer parse do base64
+    // O formato da licenca do servidor nao e JSON, e machineId:plan:expiry:subId:timestamp:signature
+    const licenseId = result.licenseId;
 
     await db.run(
       `UPDATE activation_requests SET status = 'approved', license_id = ? WHERE id = ?`,
       [licenseId, req.params.id]
     );
 
-    // Enviar email com a licença
+    // CORRECAO: usar result.licenseKey em vez de result.license
     const template = licenseApprovedTemplate(
       request.client_email,
-      result.license,
+      result.licenseKey,
       request.plan,
-      result.subscription.endDate
+      result.expiry
     );
     await sendEmail({ to: request.client_email, ...template });
 
     return res.json({
       success: true,
-      license: result.license,
+      license: result.licenseKey,        // CORRECAO: licenseKey
+      licenseId: result.licenseId,
       subscription: result.subscription,
       message: 'Licença aprovada e enviada por email',
     });
@@ -173,7 +182,6 @@ router.post('/activation-requests/:id/reject', async (req, res) => {
       [req.params.id]
     );
 
-    // Enviar email de rejeição
     await sendEmail({
       to: request.client_email,
       subject: 'VMP SaaS - Pedido Rejeitado',
