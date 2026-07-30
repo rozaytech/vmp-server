@@ -5,19 +5,11 @@ import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
-// SECRET para JWT (deve estar no .env em produção)
 const JWT_SECRET = process.env.JWT_SECRET || 'VMP_REMOTE_DASHBOARD_SECRET_2026';
-const TOKEN_EXPIRY_HOURS = 24; // Token válido por 24h
+const TOKEN_EXPIRY_HOURS = 24;
 
-// =========================================================
-// HELPER: Hash PIN
-// =========================================================
 function hashPin(pin) {
   return crypto.createHash('sha256').update(pin + 'VMP_PIN_SALT_2026').digest('hex');
-}
-
-function generateToken() {
-  return crypto.randomBytes(32).toString('hex');
 }
 
 // =========================================================
@@ -31,7 +23,7 @@ router.post('/auth', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_fields',
-        message: 'licenseId e pin são obrigatórios',
+        message: 'licenseId e pin sao obrigatorios',
       });
     }
 
@@ -39,13 +31,12 @@ router.post('/auth', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'invalid_pin_format',
-        message: 'O PIN deve ter entre 4 e 6 dígitos numéricos',
+        message: 'O PIN deve ter entre 4 e 6 digitos numericos',
       });
     }
 
     const db = await initDB();
 
-    // Verificar licença
     const license = await db.get(
       `SELECT l.*, s.plan as sub_plan, s.expiry_date as sub_expiry
        FROM licenses l
@@ -58,43 +49,39 @@ router.post('/auth', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'license_not_found',
-        message: 'Licença não encontrada ou inativa',
+        message: 'Licenca nao encontrada ou inativa',
       });
     }
 
-    // Verificar expiração
     const now = new Date();
     const expiry = new Date(license.expiry || license.sub_expiry);
     if (now > expiry) {
       return res.status(403).json({
         success: false,
         error: 'license_expired',
-        message: 'Licença expirada',
+        message: 'Licenca expirada',
         expiry: expiry.toISOString(),
       });
     }
 
-    // Verificar plano Enterprise
     const plan = license.sub_plan || license.plan;
     if (plan !== 'enterprise') {
       return res.status(403).json({
         success: false,
         error: 'feature_not_available',
-        message: 'Dashboard remoto disponível apenas no plano Enterprise',
+        message: 'Dashboard remoto disponivel apenas no plano Enterprise',
         requiredPlan: 'enterprise',
       });
     }
 
-    // Verificar PIN
     const pinHash = hashPin(pin);
     const storedPin = license.remote_pin;
 
-    // Se não tiver PIN definido
     if (!storedPin) {
       return res.status(401).json({
         success: false,
         error: 'pin_not_set',
-        message: 'PIN de acesso remoto não configurado. Configure no aplicativo VMP SaaS.',
+        message: 'PIN de acesso remoto nao configurado. Configure no aplicativo VMP SaaS.',
       });
     }
 
@@ -106,7 +93,6 @@ router.post('/auth', async (req, res) => {
       });
     }
 
-    // Gerar token JWT
     const token = jwt.sign(
       {
         licenseId: license.id,
@@ -117,18 +103,15 @@ router.post('/auth', async (req, res) => {
       { expiresIn: `${TOKEN_EXPIRY_HOURS}h` }
     );
 
-    // Guardar token na base de dados (para revogação)
-    const dbToken = generateToken();
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + TOKEN_EXPIRY_HOURS);
 
     await db.run(
       `INSERT INTO remote_access_tokens (license_id, token, pin_hash, created_at, expires_at)
        VALUES (?, ?, ?, ?, ?)`,
-      [license.id, dbToken, pinHash, now.toISOString(), expiresAt.toISOString()]
+      [license.id, token, pinHash, now.toISOString(), expiresAt.toISOString()]
     );
 
-    // Limpar tokens antigos (mais de 30 dias)
     await db.run(
       `DELETE FROM remote_access_tokens 
        WHERE created_at < datetime('now', '-30 days') 
@@ -138,9 +121,9 @@ router.post('/auth', async (req, res) => {
     res.json({
       success: true,
       token: token,
-      expiresIn: TOKEN_EXPIRY_HOURS * 3600, // segundos
+      expiresIn: TOKEN_EXPIRY_HOURS * 3600,
       business: {
-        name: license.client || 'Negócio',
+        name: license.client || 'Negocio',
         plan: plan,
         expiry: expiry.toISOString(),
       },
@@ -157,7 +140,7 @@ router.post('/auth', async (req, res) => {
 });
 
 // =========================================================
-// POST /api/remote/pin/set — Definir/alterar PIN (chamado pelo app Flutter)
+// POST /api/remote/pin/set — Definir/alterar PIN
 // =========================================================
 router.post('/pin/set', async (req, res) => {
   try {
@@ -167,7 +150,7 @@ router.post('/pin/set', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_fields',
-        message: 'licenseId e pin são obrigatórios',
+        message: 'licenseId e pin sao obrigatorios',
       });
     }
 
@@ -175,13 +158,12 @@ router.post('/pin/set', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'invalid_pin_format',
-        message: 'O PIN deve ter entre 4 e 6 dígitos numéricos',
+        message: 'O PIN deve ter entre 4 e 6 digitos numericos',
       });
     }
 
     const db = await initDB();
 
-    // Verificar licença
     const license = await db.get(
       `SELECT l.*, s.plan as sub_plan
        FROM licenses l
@@ -197,7 +179,6 @@ router.post('/pin/set', async (req, res) => {
       });
     }
 
-    // Se já tem PIN, exigir currentPin para alterar
     if (license.remote_pin && currentPin) {
       const currentHash = hashPin(currentPin);
       if (license.remote_pin !== currentHash) {
@@ -209,14 +190,12 @@ router.post('/pin/set', async (req, res) => {
       }
     }
 
-    // Atualizar PIN
     const pinHash = hashPin(pin);
     await db.run(
       `UPDATE licenses SET remote_pin = ? WHERE id = ?`,
       [pinHash, licenseId]
     );
 
-    // Revogar tokens antigos (força re-login)
     await db.run(
       `UPDATE remote_access_tokens SET is_revoked = 1 WHERE license_id = ?`,
       [licenseId]
@@ -237,7 +216,7 @@ router.post('/pin/set', async (req, res) => {
 });
 
 // =========================================================
-// POST /api/remote/pin/verify — Verificar se PIN está configurado
+// POST /api/remote/pin/verify — Verificar se PIN esta configurado
 // =========================================================
 router.post('/pin/verify', async (req, res) => {
   try {
@@ -288,7 +267,7 @@ router.get('/dashboard', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'missing_token',
-        message: 'Token de autenticação não fornecido',
+        message: 'Token de autenticacao nao fornecido',
       });
     }
 
@@ -301,7 +280,7 @@ router.get('/dashboard', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'invalid_token',
-        message: 'Token inválido ou expirado',
+        message: 'Token invalido ou expirado',
       });
     }
 
@@ -338,11 +317,10 @@ router.get('/dashboard', async (req, res) => {
       return res.status(403).json({
         success: false,
         error: 'feature_not_available',
-        message: 'Dashboard remoto disponível apenas no plano Enterprise',
+        message: 'Dashboard remoto disponivel apenas no plano Enterprise',
       });
     }
 
-    // Timezone CAT = UTC+2
     const catOffset = "+2 hours";
 
     const todaySales = await db.get(`
@@ -417,14 +395,14 @@ router.get('/dashboard', async (req, res) => {
     const userCount = await db.get(`SELECT COUNT(*) as count FROM pos_users WHERE is_active = 1`);
 
     await db.run(
-      `UPDATE remote_access_tokens SET last_used_at = ? WHERE token LIKE ?`,
-      [now.toISOString(), token.substring(0, 16) + '%']
+      `UPDATE remote_access_tokens SET last_used_at = ? WHERE token = ?`,
+      [now.toISOString(), token]
     );
 
     res.json({
       success: true,
       business: {
-        name: license.client || license.sub_client || 'Negócio',
+        name: license.client || license.sub_client || 'Negocio',
         plan: plan,
         expiry: expiry.toISOString(),
         daysRemaining: Math.ceil((expiry - now) / (1000 * 60 * 60 * 24)),
@@ -481,11 +459,11 @@ router.post('/logout', async (req, res) => {
     const db = await initDB();
 
     await db.run(
-      `UPDATE remote_access_tokens SET is_revoked = 1 WHERE token LIKE ?`,
-      [token.substring(0, 16) + '%']
+      `UPDATE remote_access_tokens SET is_revoked = 1 WHERE token = ?`,
+      [token]
     );
 
-    res.json({ success: true, message: 'Sessão terminada' });
+    res.json({ success: true, message: 'Sessao terminada' });
 
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
