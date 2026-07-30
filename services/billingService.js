@@ -1,17 +1,34 @@
 import { v4 as uuidv4 } from 'uuid';
 import { initDB } from '../db.js';
 import { PLANS } from '../billing/plans.js';
+import { generateLicenseKey, createLicenseEntry, getPlanDurationDays } from '../services/licenseService.js';
 
 // =========================================================
-// CREATE SUBSCRIPTION (usado por outros servicos)
+// CREATE SUBSCRIPTION (Bug 1, 2, 4)
 // =========================================================
-export async function createSubscription({ client, email, plan, days, isTrial = false, autoRenew = false }) {
+export async function createSubscription({ client, email, plan, days, isTrial = false, autoRenew = false, machineId = null }) {
   const db = await initDB();
   const now = new Date();
   const expiry = new Date();
 
   const planConfig = PLANS[plan];
-  const durationDays = days || (isTrial ? 7 : (planConfig?.days || 30));
+
+  // Bug 4: verificar trial duplicado por machineId
+  if (isTrial && machineId) {
+    const existingTrial = await db.get(
+      `SELECT l.* FROM licenses l
+       JOIN subscriptions s ON l.subscription_id = s.id
+       WHERE l.machine_id = ? AND s.status = 'trial' AND l.expiry > datetime('now')
+       ORDER BY l.created_at DESC LIMIT 1`,
+      [machineId]
+    );
+    if (existingTrial) {
+      throw new Error("trial_already_exists_for_this_machine");
+    }
+  }
+
+  // Bug 2: usar dias corretos por plano
+  const durationDays = days || getPlanDurationDays(plan, isTrial);
   expiry.setDate(expiry.getDate() + durationDays);
 
   const id = uuidv4();
@@ -29,7 +46,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
     [
       id,
       client,
-      email || client,  // CORRECAO: garantir que email tem valor
+      email || client,
       plan,
       status,
       now.toISOString(),
@@ -39,6 +56,19 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
       now.toISOString(),
     ]
   );
+
+  // Bug 1: criar licenca associada para que validateLicense a encontre
+  let licenseResult = null;
+  if (machineId) {
+    licenseResult = await createLicenseEntry({
+      machineId,
+      client,
+      plan,
+      expiry: expiry.toISOString(),
+      subscriptionId: id,
+      isTrial,
+    });
+  }
 
   return {
     success: true,
@@ -54,6 +84,7 @@ export async function createSubscription({ client, email, plan, days, isTrial = 
       days: durationDays,
       price: planConfig?.price || 0,
     },
+    license: licenseResult,
   };
 }
 
@@ -115,19 +146,16 @@ export async function getSubscription(client) {
 }
 
 // =========================================================
-// GET SUBSCRIPTION BY EMAIL (novo — para /api/billing/status/:email)
-// CORRECAO: procura por email OU client (fallback)
+// GET SUBSCRIPTION BY EMAIL
 // =========================================================
 export async function getSubscriptionByEmail(email) {
   const db = await initDB();
 
-  // CORRECAO: procurar primeiro por email, depois por client (fallback)
   let row = await db.get(
     `SELECT * FROM subscriptions WHERE email = ? ORDER BY created_at DESC LIMIT 1`,
     [email]
   );
 
-  // Se nao encontrou por email, tentar por client
   if (!row) {
     row = await db.get(
       `SELECT * FROM subscriptions WHERE client = ? ORDER BY created_at DESC LIMIT 1`,

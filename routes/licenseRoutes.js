@@ -5,6 +5,8 @@ import {
   transferLicense,
   listLicenses,
   revokeLicense,
+  reactivateLicense,
+  updateLicense,
 } from "../services/licenseService.js";
 import { createSubscription } from "../services/billingService.js";
 
@@ -30,6 +32,12 @@ router.post("/generate", async (req, res) => {
     });
   } catch (e) {
     console.error("GENERATE LICENSE ERROR:", e);
+    if (e.message === "trial_already_exists_for_this_machine") {
+      return res.status(409).json({
+        error: "trial_exists",
+        message: "Ja existe um trial ativo para este computador",
+      });
+    }
     return res.status(500).json({
       error: "server_error",
       details: e.message,
@@ -115,6 +123,50 @@ router.post("/revoke/:id", async (req, res) => {
   }
 });
 
+// =========================================================
+// NOVO: POST /api/licenses/reactivate/:id (Bug 3)
+// =========================================================
+router.post("/reactivate/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { days, machineId } = req.body;
+
+    const result = await reactivateLicense(id, days, machineId);
+
+    return res.json(result);
+  } catch (e) {
+    console.error("REACTIVATE LICENSE ERROR:", e);
+    return res.status(500).json({
+      error: "server_error",
+      details: e.message,
+    });
+  }
+});
+
+// =========================================================
+// NOVO: PUT /api/licenses/:id (Bug 3)
+// =========================================================
+router.put("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await updateLicense(id, req.body);
+
+    return res.json(result);
+  } catch (e) {
+    console.error("UPDATE LICENSE ERROR:", e);
+    if (e.message === "license_not_found") {
+      return res.status(404).json({ error: "not_found" });
+    }
+    if (e.message === "no_fields_to_update") {
+      return res.status(400).json({ error: "no_fields_to_update" });
+    }
+    return res.status(500).json({
+      error: "server_error",
+      details: e.message,
+    });
+  }
+});
+
 // GET /api/licenses/:id
 router.get("/:id", async (req, res) => {
   try {
@@ -142,7 +194,6 @@ router.get("/:id", async (req, res) => {
 
 // =========================================================
 // NOVO: POST /api/licenses/approve-request
-// Aprova pedido de ativacao remota — gera licenca e envia email
 // =========================================================
 router.post("/approve-request", async (req, res) => {
   try {
@@ -158,7 +209,6 @@ router.post("/approve-request", async (req, res) => {
     const { initDB } = await import('../db.js');
     const db = await initDB();
 
-    // Buscar pedido
     const request = await db.get(
       `SELECT * FROM activation_requests WHERE id = ?`,
       [requestId]
@@ -175,31 +225,23 @@ router.post("/approve-request", async (req, res) => {
       });
     }
 
-    // Gerar licenca para o cliente
     const result = await generateLicense(
       request.machine_id,
       request.client_email,
       request.plan,
-      null // usa dias do plano
+      null
     );
 
-    // Atualizar pedido para aprovado
     const now = new Date().toISOString();
     await db.run(
       `UPDATE activation_requests SET status = ?, license_id = ?, approved_at = ?, approved_by = ? WHERE id = ?`,
       ['approved', result.licenseId, now, adminEmail || 'admin', requestId]
     );
 
-    // Log
     await db.run(
       `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
       [result.licenseId, request.machine_id, "approved_remote", now]
     );
-
-    // TODO: Enviar email com a licenca via SendGrid
-    // const sgMail = await import('@sendgrid/mail');
-    // sgMail.default.setApiKey(process.env.SENDGRID_API_KEY);
-    // await sgMail.default.send({...});
 
     return res.json({
       success: true,

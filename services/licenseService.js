@@ -6,41 +6,94 @@ import { PLANS, getPlanFeatures } from "../billing/plans.js";
 const SECRET_KEY = process.env.LICENSE_SECRET || "vmp-saas-secret-2026";
 
 function hashLicense(data) {
-  return crypto
-    .createHmac("sha256", SECRET_KEY)
-    .update(data)
-    .digest("hex");
+  return crypto.createHmac("sha256", SECRET_KEY).update(data).digest("hex");
 }
 
-function generateLicenseKey(machineId, plan, expiry, subscriptionId) {
+// =========================================================
+// EXPORTADO: gerar license key (usado tambem por billingService)
+// =========================================================
+export function generateLicenseKey(machineId, plan, expiry, subscriptionId) {
   const payload = `${machineId}:${plan}:${expiry}:${subscriptionId}:${Date.now()}`;
   const signature = hashLicense(payload);
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 
 // =========================================================
-// CORRECAO: adicionado parametro isTrial (5o parametro)
+// DIAS CORRETOS POR PLANO (Bug 2 — corrige Pro = 30 dias)
+// =========================================================
+export function getPlanDurationDays(plan, isTrial = false) {
+  if (isTrial) return 7;
+  switch (plan) {
+    case "basic": return 30;
+    case "pro": return 30;
+    case "enterprise": return 365;
+    default: return 30;
+  }
+}
+
+// =========================================================
+// EXPORTADO: criar entrada de licenca (usado por billingService)
+// =========================================================
+export async function createLicenseEntry({ machineId, client, plan, expiry, subscriptionId, isTrial = false }) {
+  const db = await initDB();
+  const licenseId = uuidv4();
+  const licenseKey = generateLicenseKey(machineId, plan, expiry, subscriptionId);
+  const now = new Date().toISOString();
+
+  await db.run(
+    `INSERT INTO licenses (
+      id, machine_id, client, plan, subscription_id, expiry, status, created_at, last_validation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [licenseId, machineId, client, plan, subscriptionId, expiry, "active", now, null]
+  );
+
+  await db.run(
+    `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
+    [licenseId, machineId, isTrial ? "trial_generated" : "generated", now]
+  );
+
+  return { licenseId, licenseKey };
+}
+
+// =========================================================
+// GERAR LICENCA COMPLETA (subscricao + licenca)
 // =========================================================
 export async function generateLicense(machineId, client, plan, customDays, isTrial = false) {
   const db = await initDB();
+
+  if (!machineId || !client || !plan) {
+    throw new Error("missing_fields");
+  }
 
   const planConfig = PLANS[plan];
   if (!planConfig) {
     throw new Error("invalid_plan");
   }
 
-  const days = customDays || planConfig.days;
+  // Bug 4: bloquear trial duplicado para o mesmo machineId
+  if (isTrial) {
+    const existingTrial = await db.get(
+      `SELECT l.* FROM licenses l
+       JOIN subscriptions s ON l.subscription_id = s.id
+       WHERE l.machine_id = ? AND s.status = 'trial' AND l.expiry > datetime('now')
+       ORDER BY l.created_at DESC LIMIT 1`,
+      [machineId]
+    );
+    if (existingTrial) {
+      throw new Error("trial_already_exists_for_this_machine");
+    }
+  }
+
+  const days = customDays || getPlanDurationDays(plan, isTrial);
   const now = new Date();
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + days);
 
   const subscriptionId = uuidv4();
   const licenseId = uuidv4();
-
-  // CORRECAO: usar email como client se for trial, e guardar email na subscricao
   const email = client.includes('@') ? client : null;
 
-  // Criar subscrição
+  // Criar subscricao
   await db.run(
     `INSERT INTO subscriptions (
       id, client, email, plan, status, start_date, expiry_date,
@@ -48,8 +101,8 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       subscriptionId,
-      client,           // CORRECAO: guardar client/email aqui
-      email || client,  // CORRECAO: garantir que email tem valor para billing lookup
+      client,
+      email || client,
       plan,
       isTrial ? 'trial' : 'active',
       now.toISOString(),
@@ -60,7 +113,7 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     ]
   );
 
-  // Criar licença vinculada à subscrição
+  // Criar licenca
   const licenseKey = generateLicenseKey(machineId, plan, expiry.toISOString(), subscriptionId);
 
   await db.run(
@@ -80,13 +133,11 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     ]
   );
 
-  // Log
   await db.run(
     `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
     [licenseId, machineId, isTrial ? "trial_generated" : "generated", now.toISOString()]
   );
 
-  // CORRECAO: retornar subscription com endDate (compativel com billingService)
   return {
     licenseId,
     subscriptionId,
@@ -102,7 +153,7 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
       plan,
       status: isTrial ? 'trial' : 'active',
       startDate: now.toISOString(),
-      endDate: expiry.toISOString(),  // CORRECAO: endDate para compatibilidade
+      endDate: expiry.toISOString(),
       paymentStatus: isTrial ? 'trial' : 'pending',
       days,
       price: planConfig?.price || 0,
@@ -110,10 +161,12 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
   };
 }
 
+// =========================================================
+// VALIDAR LICENCA (Bug 1: fallback por machine_id)
+// =========================================================
 export async function validateLicense(licenseKey, machineId) {
   const db = await initDB();
 
-  // Decodificar licença
   let decoded;
   try {
     decoded = Buffer.from(licenseKey, "base64").toString("utf-8");
@@ -129,61 +182,68 @@ export async function validateLicense(licenseKey, machineId) {
   const [licMachineId, plan, expiryStr, subscriptionId] = parts;
   const signature = parts[parts.length - 1];
 
-  // Verificar assinatura
   const payload = parts.slice(0, -1).join(":");
   const expectedSig = hashLicense(payload);
   if (signature !== expectedSig) {
     return { valid: false, error: "invalid_signature" };
   }
 
-  // Verificar machine ID
   if (licMachineId !== machineId) {
     return { valid: false, error: "machine_mismatch" };
   }
 
-  // Verificar expiração
   const expiry = new Date(expiryStr);
   const now = new Date();
   if (expiry < now) {
     return { valid: false, error: "expired", expiry: expiryStr };
   }
 
-  // Verificar no banco se ainda está ativa
-  const dbLicense = await db.get(
+  // Procurar licenca ativa pela subscription_id
+  let dbLicense = await db.get(
     `SELECT * FROM licenses WHERE subscription_id = ? AND status = 'active'`,
     [subscriptionId]
   );
+
+  // Bug 1: fallback — se nao encontrar por subscription_id, procurar por machine_id ativa
+  if (!dbLicense) {
+    dbLicense = await db.get(
+      `SELECT * FROM licenses 
+       WHERE machine_id = ? AND status = 'active' AND expiry > datetime('now')
+       ORDER BY created_at DESC LIMIT 1`,
+      [machineId]
+    );
+  }
 
   if (!dbLicense) {
     return { valid: false, error: "revoked" };
   }
 
-  // Atualizar last_validation
   await db.run(
     `UPDATE licenses SET last_validation = ? WHERE id = ?`,
     [now.toISOString(), dbLicense.id]
   );
 
-  // Buscar subscrição para feature flags
   const subscription = await db.get(
     `SELECT * FROM subscriptions WHERE id = ?`,
-    [subscriptionId]
+    [dbLicense.subscription_id || subscriptionId]
   );
 
   return {
     valid: true,
-    plan,
-    expiry: expiryStr,
-    daysRemaining: Math.ceil((expiry - now) / (1000 * 60 * 60 * 24)),
-    features: getPlanFeatures(plan),
-    subscriptionId,
+    plan: dbLicense.plan || plan,
+    expiry: dbLicense.expiry || expiryStr,
+    daysRemaining: Math.ceil((new Date(dbLicense.expiry || expiryStr) - now) / (1000 * 60 * 60 * 24)),
+    features: getPlanFeatures(dbLicense.plan || plan),
+    subscriptionId: dbLicense.subscription_id || subscriptionId,
     licenseId: dbLicense.id,
     client: dbLicense.client,
     paymentStatus: subscription?.payment_status || "unknown",
   };
 }
 
-/// TRANSFERIR LICENÇA: quebrou computador, passar para outro
+// =========================================================
+// TRANSFERIR LICENCA
+// =========================================================
 export async function transferLicense(oldLicenseId, newMachineId, reason) {
   const db = await initDB();
 
@@ -196,7 +256,6 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
     throw new Error("license_not_found_or_inactive");
   }
 
-  // Calcular dias restantes
   const now = new Date();
   const oldExpiry = new Date(oldLicense.expiry);
   const daysRemaining = Math.ceil((oldExpiry - now) / (1000 * 60 * 60 * 24));
@@ -205,19 +264,16 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
     throw new Error("license_expired");
   }
 
-  // Revogar licença antiga
   await db.run(
     `UPDATE licenses SET status = 'revoked', last_validation = ? WHERE id = ?`,
     [now.toISOString(), oldLicenseId]
   );
 
-  // Log da revogação
   await db.run(
     `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
     [oldLicenseId, oldLicense.machine_id, "revoked_for_transfer", now.toISOString()]
   );
 
-  // Criar nova licença com dias restantes
   const newLicenseId = uuidv4();
   const newExpiry = new Date();
   newExpiry.setDate(newExpiry.getDate() + daysRemaining);
@@ -246,13 +302,11 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
     ]
   );
 
-  // Log da nova licença
   await db.run(
     `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
     [newLicenseId, newMachineId, "transferred", now.toISOString()]
   );
 
-  // Audit log
   await db.run(
     `INSERT INTO audit_logs (actor, action, target, created_at) VALUES (?, ?, ?, ?)`,
     ["system", "license_transfer", `${oldLicenseId} -> ${newLicenseId}`, now.toISOString()]
@@ -269,7 +323,9 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
   };
 }
 
-/// LISTAR LICENÇAS com detalhes da subscrição
+// =========================================================
+// LISTAR LICENCAS
+// =========================================================
 export async function listLicenses(filters = {}) {
   const db = await initDB();
 
@@ -311,7 +367,9 @@ export async function listLicenses(filters = {}) {
   return licenses;
 }
 
-/// REVOGAR LICENÇA
+// =========================================================
+// REVOGAR LICENCA
+// =========================================================
 export async function revokeLicense(licenseId, reason) {
   const db = await initDB();
   const now = new Date().toISOString();
@@ -327,4 +385,101 @@ export async function revokeLicense(licenseId, reason) {
   );
 
   return { success: true, licenseId, revokedAt: now };
+}
+
+// =========================================================
+// REATIVAR LICENCA (Bug 3)
+// =========================================================
+export async function reactivateLicense(licenseId, newDays = null, newMachineId = null) {
+  const db = await initDB();
+  const now = new Date();
+
+  const license = await db.get(
+    `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry 
+     FROM licenses l
+     LEFT JOIN subscriptions s ON l.subscription_id = s.id
+     WHERE l.id = ?`,
+    [licenseId]
+  );
+
+  if (!license) {
+    throw new Error("license_not_found");
+  }
+
+  const days = newDays || getPlanDurationDays(license.plan, false);
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + days);
+
+  const machineId = newMachineId || license.machine_id;
+
+  await db.run(
+    `UPDATE licenses SET status = 'active', expiry = ?, machine_id = ?, last_validation = ? WHERE id = ?`,
+    [expiry.toISOString(), machineId, now.toISOString(), licenseId]
+  );
+
+  if (license.subscription_id) {
+    await db.run(
+      `UPDATE subscriptions SET status = 'active', expiry_date = ? WHERE id = ?`,
+      [expiry.toISOString(), license.subscription_id]
+    );
+  }
+
+  await db.run(
+    `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
+    [licenseId, machineId, "reactivated", now.toISOString()]
+  );
+
+  return {
+    success: true,
+    licenseId,
+    newExpiry: expiry.toISOString(),
+    days,
+    machineId,
+  };
+}
+
+// =========================================================
+// EDITAR LICENCA (Bug 3)
+// =========================================================
+export async function updateLicense(licenseId, { plan, expiry, status, client, machineId }) {
+  const db = await initDB();
+
+  const license = await db.get(`SELECT * FROM licenses WHERE id = ?`, [licenseId]);
+  if (!license) {
+    throw new Error("license_not_found");
+  }
+
+  const updates = [];
+  const values = [];
+
+  if (plan !== undefined) { updates.push("plan = ?"); values.push(plan); }
+  if (expiry !== undefined) { updates.push("expiry = ?"); values.push(expiry); }
+  if (status !== undefined) { updates.push("status = ?"); values.push(status); }
+  if (client !== undefined) { updates.push("client = ?"); values.push(client); }
+  if (machineId !== undefined) { updates.push("machine_id = ?"); values.push(machineId); }
+
+  if (updates.length === 0) {
+    throw new Error("no_fields_to_update");
+  }
+
+  values.push(licenseId);
+  await db.run(`UPDATE licenses SET ${updates.join(", ")} WHERE id = ?`, values);
+
+  // Sincronizar subscricao
+  if (plan !== undefined || expiry !== undefined || status !== undefined) {
+    const subUpdates = [];
+    const subValues = [];
+    if (plan !== undefined) { subUpdates.push("plan = ?"); subValues.push(plan); }
+    if (expiry !== undefined) { subUpdates.push("expiry_date = ?"); subValues.push(expiry); }
+    if (status !== undefined) {
+      const subStatus = status === 'active' ? 'active' : (status === 'revoked' ? 'cancelled' : status);
+      subUpdates.push("status = ?"); subValues.push(subStatus);
+    }
+    if (subUpdates.length > 0 && license.subscription_id) {
+      subValues.push(license.subscription_id);
+      await db.run(`UPDATE subscriptions SET ${subUpdates.join(", ")} WHERE id = ?`, subValues);
+    }
+  }
+
+  return { success: true, licenseId };
 }
