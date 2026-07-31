@@ -13,6 +13,31 @@ function hashPin(pin) {
 }
 
 // =========================================================
+// MIDDLEWARE: Extrair license do JWT
+// =========================================================
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({
+      success: false,
+      error: 'missing_token',
+      message: 'Token de autenticacao nao fornecido',
+    });
+  }
+  try {
+    const token = authHeader.substring(7);
+    req.license = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (err) {
+    return res.status(401).json({
+      success: false,
+      error: 'invalid_token',
+      message: 'Token invalido ou expirado',
+    });
+  }
+}
+
+// =========================================================
 // POST /api/remote/auth — Autenticar com License ID + PIN
 // =========================================================
 router.post('/auth', async (req, res) => {
@@ -258,6 +283,215 @@ router.post('/pin/verify', async (req, res) => {
 });
 
 // =========================================================
+// POST /api/remote/sync/sales — Receber vendas do Flutter
+// =========================================================
+router.post('/sync/sales', requireAuth, async (req, res) => {
+  try {
+    const { sales } = req.body;
+    const licenseId = req.license.licenseId;
+
+    if (!Array.isArray(sales) || sales.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_sales',
+        message: 'Array de vendas obrigatorio',
+      });
+    }
+
+    const db = await initDB();
+    const results = [];
+    const errors = [];
+
+    for (const saleData of sales) {
+      const clientSaleId = saleData.id;
+
+      try {
+        // 1. Idempotencia: ja existe?
+        const existing = await db.get(
+          `SELECT id FROM sales WHERE client_sale_id = ? AND license_id = ?`,
+          [clientSaleId, licenseId]
+        );
+        if (existing) {
+          results.push({ clientSaleId, status: 'skipped', serverId: existing.id });
+          continue;
+        }
+
+        // 2. Resolver produtos (client_product_id + license_id ou barcode)
+        const productIdMap = {};
+        if (saleData.items && Array.isArray(saleData.items)) {
+          for (const item of saleData.items) {
+            let product = null;
+
+            if (item.product_id != null) {
+              product = await db.get(
+                `SELECT id FROM products WHERE client_product_id = ? AND license_id = ?`,
+                [item.product_id, licenseId]
+              );
+            }
+
+            if (!product && item.barcode) {
+              product = await db.get(
+                `SELECT id FROM products WHERE barcode = ? AND (license_id = ? OR license_id IS NULL)`,
+                [item.barcode, licenseId]
+              );
+            }
+
+            if (!product) {
+              const nowIso = new Date().toISOString();
+              const result = await db.run(
+                `INSERT INTO products (
+                  name, barcode, price, cost_price, stock, category, unit,
+                  is_active, created_at, updated_at, client_product_id, license_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  item.product_name || 'Produto',
+                  item.barcode || null,
+                  item.price || 0,
+                  item.cost_price || 0,
+                  0,
+                  item.category || null,
+                  item.unit || 'UN',
+                  1,
+                  saleData.date || nowIso,
+                  saleData.date || nowIso,
+                  item.product_id || null,
+                  licenseId,
+                ]
+              );
+              product = { id: result.lastID };
+            }
+
+            productIdMap[item.product_id] = product.id;
+          }
+        }
+
+        // 3. Inserir venda
+        const saleResult = await db.run(
+          `INSERT INTO sales (
+            user_id, user_name, total_amount, subtotal, tax_amount, discount_amount,
+            customer_name, customer_nuit, notes, payment_method, status,
+            client_sale_id, license_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            1,
+            saleData.user || 'Sistema',
+            saleData.total || 0,
+            saleData.subtotal || saleData.total || 0,
+            saleData.iva_amount || 0,
+            saleData.discount_amount || 0,
+            saleData.customer_name || null,
+            saleData.customer_nuit || null,
+            saleData.notes || null,
+            saleData.payment_method || 'cash',
+            saleData.status || 'completed',
+            clientSaleId,
+            licenseId,
+            saleData.date || new Date().toISOString(),
+            new Date().toISOString(),
+          ]
+        );
+        const serverSaleId = saleResult.lastID;
+
+        // 4. Inserir itens
+        if (saleData.items && Array.isArray(saleData.items)) {
+          for (const item of saleData.items) {
+            const serverProductId = productIdMap[item.product_id];
+            if (!serverProductId) continue;
+
+            await db.run(
+              `INSERT INTO sale_items (
+                sale_id, product_id, product_name, quantity, unit_price,
+                cost_price, total_price, discount, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                serverSaleId,
+                serverProductId,
+                item.product_name || 'Item',
+                item.quantity || 0,
+                item.price || 0,
+                item.cost_price || 0,
+                (item.price || 0) * (item.quantity || 0),
+                item.discount_amount || 0,
+                item.date || saleData.date || new Date().toISOString(),
+              ]
+            );
+          }
+        }
+
+        // 5. Inserir pagamentos
+        if (saleData.payments && Array.isArray(saleData.payments)) {
+          for (const payment of saleData.payments) {
+            await db.run(
+              `INSERT INTO sale_payments (
+                sale_id, method, amount, change_amount, reference, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?)`,
+              [
+                serverSaleId,
+                payment.method || 'cash',
+                payment.amount || 0,
+                payment.change || 0,
+                payment.reference || null,
+                payment.created_at || saleData.date || new Date().toISOString(),
+              ]
+            );
+          }
+        }
+
+        // 6. Inserir movimentos de stock e ajustar stock
+        if (saleData.stock_movements && Array.isArray(saleData.stock_movements)) {
+          for (const sm of saleData.stock_movements) {
+            const serverProductId = productIdMap[sm.product_id];
+            if (!serverProductId) continue;
+
+            await db.run(
+              `INSERT INTO stock_movements (
+                product_id, type, quantity, unit_cost, reason, sale_id, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [
+                serverProductId,
+                sm.type || 'sale',
+                sm.quantity || 0,
+                sm.unit_cost || 0,
+                sm.reason || 'Sync VMP',
+                serverSaleId,
+                sm.date || saleData.date || new Date().toISOString(),
+              ]
+            );
+
+            await db.run(
+              `UPDATE products SET stock = stock + ? WHERE id = ?`,
+              [sm.quantity || 0, serverProductId]
+            );
+          }
+        }
+
+        results.push({ clientSaleId, status: 'synced', serverId: serverSaleId });
+      } catch (itemError) {
+        console.error(`SYNC SALE ERROR (clientSaleId=${clientSaleId}):`, itemError);
+        errors.push({ clientSaleId, error: itemError.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      synced: results.filter(r => r.status === 'synced').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
+      errors: errors.length,
+      details: results,
+      errorDetails: errors,
+    });
+
+  } catch (e) {
+    console.error('SYNC SALES ERROR:', e);
+    res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: e.message,
+    });
+  }
+});
+
+// =========================================================
 // GET /api/remote/dashboard — Dashboard protegido por JWT
 // =========================================================
 router.get('/dashboard', async (req, res) => {
@@ -328,21 +562,24 @@ router.get('/dashboard', async (req, res) => {
       FROM sales 
       WHERE date(created_at, '${catOffset}') = date('now', '${catOffset}') 
       AND status = 'completed'
-    `);
+      AND license_id = ?
+    `, [licenseId]);
 
     const monthSales = await db.get(`
       SELECT COALESCE(SUM(total_amount), 0) as total, COUNT(*) as count
       FROM sales 
       WHERE strftime('%Y-%m', created_at, '${catOffset}') = strftime('%Y-%m', 'now', '${catOffset}') 
       AND status = 'completed'
-    `);
+      AND license_id = ?
+    `, [licenseId]);
 
     const weekSales = await db.get(`
       SELECT COALESCE(SUM(total_amount), 0) as total, COUNT(*) as count
       FROM sales 
       WHERE date(created_at, '${catOffset}') >= date('now', '${catOffset}', '-7 days') 
       AND status = 'completed'
-    `);
+      AND license_id = ?
+    `, [licenseId]);
 
     const topProducts = await db.all(`
       SELECT p.name, SUM(si.quantity) as qty, SUM(si.total_price) as revenue
@@ -350,27 +587,30 @@ router.get('/dashboard', async (req, res) => {
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
       WHERE s.status = 'completed' 
+      AND s.license_id = ?
       AND date(s.created_at, '${catOffset}') >= date('now', '${catOffset}', '-7 days')
       GROUP BY si.product_id
       ORDER BY qty DESC
       LIMIT 5
-    `);
+    `, [licenseId]);
 
     const lowStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
       WHERE stock <= min_stock AND stock > 0 AND is_active = 1
+      AND license_id = ?
       ORDER BY stock ASC
       LIMIT 10
-    `);
+    `, [licenseId]);
 
     const outOfStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
       WHERE stock = 0 AND is_active = 1
+      AND license_id = ?
       ORDER BY name ASC
       LIMIT 10
-    `);
+    `, [licenseId]);
 
     const openSessions = await db.all(`
       SELECT cs.*, pu.name as user_name
@@ -386,12 +626,17 @@ router.get('/dashboard', async (req, res) => {
         COUNT(*) as count
       FROM sales 
       WHERE status = 'completed' 
+      AND license_id = ?
       AND date(created_at, '${catOffset}') >= date('now', '${catOffset}', '-7 days')
       GROUP BY date(created_at, '${catOffset}')
       ORDER BY day ASC
-    `);
+    `, [licenseId]);
 
-    const productCount = await db.get(`SELECT COUNT(*) as count FROM products WHERE is_active = 1`);
+    const productCount = await db.get(`
+      SELECT COUNT(*) as count FROM products 
+      WHERE is_active = 1 AND license_id = ?
+    `, [licenseId]);
+
     const userCount = await db.get(`SELECT COUNT(*) as count FROM pos_users WHERE is_active = 1`);
 
     await db.run(

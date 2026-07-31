@@ -33,14 +33,13 @@ export async function initDB() {
   const hasSubscriptionId = licenseColumns.some(col => col.name === 'subscription_id');
   if (!hasSubscriptionId) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN subscription_id TEXT`);
-    console.log('[MIGRATION] Adicionada coluna subscription_id à tabela licenses');
+    console.log('[MIGRATION] Adicionada coluna subscription_id a tabela licenses');
   }
 
-  // NOVO: Adicionar coluna remote_pin às licenses (para acesso remoto)
   const hasRemotePin = licenseColumns.some(col => col.name === 'remote_pin');
   if (!hasRemotePin) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN remote_pin TEXT`);
-    console.log('[MIGRATION] Adicionada coluna remote_pin à tabela licenses');
+    console.log('[MIGRATION] Adicionada coluna remote_pin a tabela licenses');
   }
 
   await db.exec(`
@@ -140,7 +139,7 @@ export async function initDB() {
   `);
 
   // =========================================================
-  // NOVA TABELA: Tokens de Acesso Remoto
+  // TABELA: Tokens de Acesso Remoto
   // =========================================================
   await db.exec(`
     CREATE TABLE IF NOT EXISTS remote_access_tokens (
@@ -166,7 +165,7 @@ export async function initDB() {
   `);
 
   // =========================================================
-  // NOVAS TABELAS POS / VMP SAAS
+  // TABELAS POS / VMP SAAS
   // =========================================================
   await db.exec(`
     CREATE TABLE IF NOT EXISTS warehouses (
@@ -313,17 +312,46 @@ export async function initDB() {
   `);
 
   // =========================================================
+  // MIGRATIONS: Sync support (v2.3.3)
+  // =========================================================
+  const salesColumns = await db.all(`PRAGMA table_info(sales)`);
+  if (!salesColumns.some(c => c.name === 'user_name')) {
+    await db.exec(`ALTER TABLE sales ADD COLUMN user_name TEXT`);
+    console.log('[MIGRATION] Adicionada coluna user_name a sales');
+  }
+  if (!salesColumns.some(c => c.name === 'client_sale_id')) {
+    await db.exec(`ALTER TABLE sales ADD COLUMN client_sale_id INTEGER`);
+    console.log('[MIGRATION] Adicionada coluna client_sale_id a sales');
+  }
+  if (!salesColumns.some(c => c.name === 'license_id')) {
+    await db.exec(`ALTER TABLE sales ADD COLUMN license_id TEXT`);
+    console.log('[MIGRATION] Adicionada coluna license_id a sales');
+  }
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_sales_client_sale ON sales(client_sale_id, license_id)`);
+
+  const productsColumns = await db.all(`PRAGMA table_info(products)`);
+  if (!productsColumns.some(c => c.name === 'client_product_id')) {
+    await db.exec(`ALTER TABLE products ADD COLUMN client_product_id INTEGER`);
+    console.log('[MIGRATION] Adicionada coluna client_product_id a products');
+  }
+  if (!productsColumns.some(c => c.name === 'license_id')) {
+    await db.exec(`ALTER TABLE products ADD COLUMN license_id TEXT`);
+    console.log('[MIGRATION] Adicionada coluna license_id a products');
+  }
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_products_client ON products(client_product_id, license_id)`);
+
+  // =========================================================
   // MIGRATIONS & SEED DATA
   // =========================================================
 
-  // Seed: Warehouse padrão
+  // Seed: Warehouse padrao
   const warehouseCount = await db.get(`SELECT COUNT(*) as count FROM warehouses`);
   if (warehouseCount.count === 0) {
     await db.run(
       `INSERT INTO warehouses (name, location, created_at) VALUES (?, ?, ?)`,
-      ['Armazém Principal', 'Sede', new Date().toISOString()]
+      ['Armazem Principal', 'Sede', new Date().toISOString()]
     );
-    console.log('[SEED] Warehouse padrão criada');
+    console.log('[SEED] Warehouse padrao criada');
   }
 
   // Seed: POS User admin
@@ -336,7 +364,7 @@ export async function initDB() {
     console.log('[SEED] POS User admin criado (PIN: 1234)');
   }
 
-  // MIGRATION: Criar subscrições para licenças antigas
+  // MIGRATION: Criar subscricoes para licencas antigas
   const orphanedLicenses = await db.all(`
     SELECT l.* FROM licenses l
     LEFT JOIN subscriptions s ON l.subscription_id = s.id
@@ -370,7 +398,7 @@ export async function initDB() {
       [subId, lic.id]
     );
 
-    console.log(`[MIGRATION] Criada subscrição ${subId} para licença antiga ${lic.id} (${lic.client})`);
+    console.log(`[MIGRATION] Criada subscricao ${subId} para licenca antiga ${lic.id} (${lic.client})`);
   }
 
   // Admin do painel (mantido do original)
