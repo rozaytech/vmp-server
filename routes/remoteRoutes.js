@@ -283,6 +283,107 @@ router.post('/pin/verify', async (req, res) => {
 });
 
 // =========================================================
+// POST /api/remote/sync/products — Sync de catalogo do Flutter
+// =========================================================
+router.post('/sync/products', requireAuth, async (req, res) => {
+  try {
+    const { products } = req.body;
+    const licenseId = req.license.licenseId;
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_products',
+        message: 'Array de produtos obrigatorio',
+      });
+    }
+
+    const db = await initDB();
+    const results = [];
+    const now = new Date().toISOString();
+
+    for (const p of products) {
+      const clientProductId = p.id;
+
+      try {
+        const existing = await db.get(
+          `SELECT id FROM products WHERE client_product_id = ? AND license_id = ?`,
+          [clientProductId, licenseId]
+        );
+
+        if (existing) {
+          await db.run(
+            `UPDATE products SET
+              name = ?, barcode = ?, price = ?, cost_price = ?,
+              stock = ?, min_stock = ?, max_stock = ?, category = ?,
+              unit = ?, is_active = ?, updated_at = ?
+             WHERE id = ?`,
+            [
+              p.name || 'Produto',
+              p.barcode || null,
+              p.price || 0,
+              p.cost_price || 0,
+              p.stock || 0,
+              p.min_stock || 0,
+              p.max_stock || 0,
+              p.category || null,
+              p.unit || 'UN',
+              p.is_active != null ? p.is_active : 1,
+              now,
+              existing.id,
+            ]
+          );
+          results.push({ clientProductId, status: 'updated', serverId: existing.id });
+        } else {
+          const result = await db.run(
+            `INSERT INTO products (
+              name, barcode, price, cost_price, stock, min_stock, max_stock,
+              category, unit, is_active, created_at, updated_at,
+              client_product_id, license_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              p.name || 'Produto',
+              p.barcode || null,
+              p.price || 0,
+              p.cost_price || 0,
+              p.stock || 0,
+              p.min_stock || 0,
+              p.max_stock || 0,
+              p.category || null,
+              p.unit || 'UN',
+              p.is_active != null ? p.is_active : 1,
+              now,
+              now,
+              clientProductId,
+              licenseId,
+            ]
+          );
+          results.push({ clientProductId, status: 'created', serverId: result.lastID });
+        }
+      } catch (itemError) {
+        console.error(`SYNC PRODUCT ERROR (clientProductId=${clientProductId}):`, itemError);
+        results.push({ clientProductId, status: 'error', error: itemError.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      synced: results.filter(r => r.status !== 'error').length,
+      errors: results.filter(r => r.status === 'error').length,
+      details: results,
+    });
+
+  } catch (e) {
+    console.error('SYNC PRODUCTS ERROR:', e);
+    res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: e.message,
+    });
+  }
+});
+
+// =========================================================
 // POST /api/remote/sync/sales — Receber vendas do Flutter
 // =========================================================
 router.post('/sync/sales', requireAuth, async (req, res) => {
@@ -594,6 +695,7 @@ router.get('/dashboard', async (req, res) => {
       LIMIT 5
     `, [licenseId]);
 
+    // CORRECAO: stock <= 0 em vez de stock = 0 para pegar negativos tambem
     const lowStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
@@ -606,7 +708,7 @@ router.get('/dashboard', async (req, res) => {
     const outOfStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
-      WHERE stock = 0 AND is_active = 1
+      WHERE stock <= 0 AND is_active = 1
       AND license_id = ?
       ORDER BY name ASC
       LIMIT 10
