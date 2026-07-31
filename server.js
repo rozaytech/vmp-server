@@ -9,6 +9,7 @@ import billingRoutes from './routes/billingRoutes.js';
 import statsRoutes from './routes/statsRoutes.js';
 import publicRoutes from './routes/publicRoutes.js';
 import remoteRoutes from './routes/remoteRoutes.js';
+import { startBackupScheduler, triggerBackup } from './services/backupService.js';
 
 // Rotas POS
 import productRoutes from './routes/productRoutes.js';
@@ -48,6 +49,7 @@ app.get('/', (req, res) => {
       pos_products: true,
       pos_sales: true,
       remote_dashboard: true,
+      backup: true,
     }
   });
 });
@@ -68,13 +70,18 @@ app.get('/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/licenses', licenseRoutes);
-app.use('/api/admin', adminRoutes);        // activation-requests esta aqui dentro
+app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/remote', remoteRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
+
+// =========================================================
+// BACKUP MANUAL (protegido por API key)
+// =========================================================
+app.post('/api/admin/backup', triggerBackup);
 
 // =========================================================
 // BILLING STATUS POR EMAIL (unica rota direta no server)
@@ -195,7 +202,7 @@ app.get('/api/public/version', (req, res) => {
   res.json({
     version: '2.3.2',
     downloadUrl: 'https://vmp-landing.vercel.app/download',
-    releaseNotes: 'Dashboard remoto com autenticação, correções de timezone, melhorias de segurança',
+    releaseNotes: 'Dashboard remoto com autenticacao, correcoes de timezone, melhorias de seguranca, backup automatico',
     forceUpdate: false,
   });
 });
@@ -226,15 +233,19 @@ app.listen(PORT, () => {
   console.log(`  - POS Products:   /api/products`);
   console.log(`  - POS Sales:      /api/sales`);
   console.log(`  - Billing Status: /api/billing/status/:email`);
+  console.log(`  - Backup Manual:  POST /api/admin/backup`);
 });
 
 // =========================================================
-// Verificar/criar tabelas no startup
+// STARTUP: Backup scheduler + verificacao de tabelas
 // =========================================================
 (async () => {
   try {
     const db = await initDB();
     
+    // Iniciar backup scheduler
+    startBackupScheduler();
+
     // Verificar se tabela activation_requests existe
     const tableExists = await db.get(`
       SELECT name FROM sqlite_master 
