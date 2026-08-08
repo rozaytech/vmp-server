@@ -10,7 +10,6 @@ const router = express.Router();
 
 // =========================================================
 // START TRIAL
-// CORRECAO: generateLicense agora aceita 5 args, retorna subscription.endDate
 // =========================================================
 router.post('/trial/start', async (req, res) => {
   try {
@@ -19,29 +18,33 @@ router.post('/trial/start', async (req, res) => {
     if (!machineId || !email || !plan) {
       return res.status(400).json({
         error: 'missing_fields',
-        message: 'machineId, email e plan são obrigatórios',
+        message: 'machineId, email e plan sao obrigatorios',
       });
     }
 
-    // CORRECAO: passar isTrial=true como 5o argumento
     const result = await generateLicense(machineId, email, plan, 7, true);
 
-    // CORRECAO: usar result.subscription.endDate (agora existe)
     const template = trialStartedTemplate(email, 7, result.subscription.endDate);
     await sendEmail({ to: email, ...template });
 
     return res.json({
       success: true,
-      license: result.licenseKey,        // CORRECAO: licenseKey em vez de license
-      licenseKey: result.licenseKey,     // backward compatibility
+      license: result.licenseKey,
+      licenseKey: result.licenseKey,
       subscription: result.subscription,
-      endDate: result.subscription.endDate,  // CORRECAO: endDate para o app
-      expiry: result.subscription.endDate,   // backward compatibility
+      endDate: result.subscription.endDate,
+      expiry: result.subscription.endDate,
       message: 'Trial de 7 dias iniciado com sucesso',
     });
 
   } catch (e) {
     console.error('TRIAL START ERROR:', e);
+    if (e.message === 'trial_already_exists_for_this_machine') {
+      return res.status(409).json({
+        error: 'trial_exists',
+        message: 'Ja existe um trial ativo para este computador',
+      });
+    }
     return res.status(500).json({
       error: 'server_error',
       details: e.message,
@@ -69,9 +72,7 @@ router.get('/trial/status/:machineId', async (req, res) => {
     );
 
     if (!row) {
-      return res.json({
-        hasTrial: false,
-      });
+      return res.json({ hasTrial: false });
     }
 
     const now = new Date();
@@ -88,9 +89,7 @@ router.get('/trial/status/:machineId', async (req, res) => {
 
   } catch (e) {
     console.error('TRIAL STATUS ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-    });
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
@@ -104,7 +103,7 @@ router.post('/license/request', async (req, res) => {
     if (!machineId || !email || !plan) {
       return res.status(400).json({
         error: 'missing_fields',
-        message: 'machineId, email e plan são obrigatórios',
+        message: 'machineId, email e plan sao obrigatorios',
       });
     }
 
@@ -112,12 +111,9 @@ router.post('/license/request', async (req, res) => {
     const requestId = uuidv4();
     const now = new Date().toISOString();
 
-    // Verificar se já existe pedido pendente
     const existing = await db.get(
-      `
-      SELECT * FROM activation_requests
-      WHERE machine_id = ? AND client_email = ? AND status = 'pending'
-      `,
+      `SELECT * FROM activation_requests
+       WHERE machine_id = ? AND client_email = ? AND status = 'pending'`,
       [machineId, email]
     );
 
@@ -125,43 +121,29 @@ router.post('/license/request', async (req, res) => {
       return res.status(409).json({
         success: false,
         error: 'pending_request_exists',
-        message: 'Já existe um pedido pendente para este email. Aguarde aprovação.',
+        message: 'Ja existe um pedido pendente para este email. Aguarde aprovacao.',
         requestId: existing.id,
       });
     }
 
     await db.run(
-      `
-      INSERT INTO activation_requests (
+      `INSERT INTO activation_requests (
         id, machine_id, client_email, plan, status, created_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?)
-      `,
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
       [requestId, machineId, email, plan, 'pending', now]
     );
 
-    // Enviar email de confirmação de pedido
     await sendEmail({
       to: email,
       subject: 'VMP SaaS - Pedido Recebido',
-      body: `Olá,
-
-Recebemos o seu pedido de ativação para o plano ${plan}.
-
-O seu pedido está em análise. Assim que aprovado, receberá a sua licença por email.
-
-Machine ID: ${machineId}
-Pedido: ${requestId}
-
-Obrigado,
-Equipa VMP SaaS`,
+      body: `Ola,\n\nRecebemos o seu pedido de ativacao para o plano ${plan}.\n\nO seu pedido esta em analise. Assim que aprovado, recebera a sua licenca por email.\n\nMachine ID: ${machineId}\nPedido: ${requestId}\n\nObrigado,\nEquipa VMP SaaS`,
     });
 
     return res.json({
       success: true,
       status: 'pending',
       requestId,
-      message: 'Pedido enviado com sucesso. Aguarde aprovação do administrador.',
+      message: 'Pedido enviado com sucesso. Aguarde aprovacao do administrador.',
     });
 
   } catch (e) {
@@ -181,28 +163,19 @@ router.get('/license/request/:requestId', async (req, res) => {
     const db = await initDB();
 
     const row = await db.get(
-      `
-      SELECT * FROM activation_requests WHERE id = ?
-      `,
+      `SELECT * FROM activation_requests WHERE id = ?`,
       [req.params.requestId]
     );
 
     if (!row) {
-      return res.status(404).json({
-        error: 'not_found',
-      });
+      return res.status(404).json({ error: 'not_found' });
     }
 
-    return res.json({
-      success: true,
-      request: row,
-    });
+    return res.json({ success: true, request: row });
 
   } catch (e) {
     console.error('CHECK REQUEST ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-    });
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
@@ -214,20 +187,13 @@ router.post('/payment/initiate', async (req, res) => {
     const { type, amount, client, plan } = req.body;
 
     if (!type || !amount || !client || !plan) {
-      return res.status(400).json({
-        error: 'missing_fields',
-      });
+      return res.status(400).json({ error: 'missing_fields' });
     }
 
     const result = await initiatePayment(type, amount, client, plan);
 
-    // Enviar email com instruções
     const template = paymentInstructionsTemplate(
-      client,
-      type,
-      result.reference,
-      amount,
-      result.instructions.message
+      client, type, result.reference, amount, result.instructions.message
     );
     await sendEmail({ to: client, ...template });
 
@@ -235,9 +201,7 @@ router.post('/payment/initiate', async (req, res) => {
 
   } catch (e) {
     console.error('PAYMENT INITIATE ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-    });
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
@@ -249,20 +213,15 @@ router.post('/payment/verify', async (req, res) => {
     const { reference } = req.body;
 
     if (!reference) {
-      return res.status(400).json({
-        error: 'missing_reference',
-      });
+      return res.status(400).json({ error: 'missing_reference' });
     }
 
     const result = await verifyPayment(reference);
-
     return res.json(result);
 
   } catch (e) {
     console.error('PAYMENT VERIFY ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-    });
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
