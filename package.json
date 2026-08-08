@@ -1,6 +1,6 @@
 {
   "name": "vmp-license-server",
-  "version": "2.3.5",
+  "version": "2.3.8",
   "type": "module",
   "main": "server.js",
   "scripts": {

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
+import dotenv from 'dotenv';
 
 import licenseRoutes from './routes/licenseRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
@@ -18,6 +19,8 @@ import saleRoutes from './routes/saleRoutes.js';
 // Import para rota direta no server (nao esta em nenhum router)
 import { getSubscriptionByEmail } from "./services/billingService.js";
 import { initDB } from './db.js';
+
+dotenv.config();
 
 const app = express();
 
@@ -37,7 +40,7 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'VMP SaaS Control Plane Online',
-    version: '2.3.2',
+    version: '2.3.8',
     mode: 'enterprise-saas',
     services: {
       auth: true,
@@ -60,7 +63,7 @@ app.get('/health', (req, res) => {
     service: 'vmp-license-server',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    version: '2.3.2',
+    version: '2.3.8',
   });
 });
 
@@ -89,7 +92,7 @@ app.post('/api/admin/backup', triggerBackup);
 app.get("/api/billing/status/:email", async (req, res) => {
   try {
     const { email } = req.params;
-    
+
     if (!email) {
       return res.status(400).json({
         error: "missing_email",
@@ -200,9 +203,9 @@ app.get('/api/public/plans', (req, res) => {
 // =========================================================
 app.get('/api/public/version', (req, res) => {
   res.json({
-    version: '2.3.2',
+    version: '2.3.8',
     downloadUrl: 'https://vmp-landing.vercel.app/download',
-    releaseNotes: 'Dashboard remoto com autenticacao, correcoes de timezone, melhorias de seguranca, backup automatico',
+    releaseNotes: 'Correcao critica de licenciamento com revalidacao online, base de dados persistente Turso, melhorias de seguranca e estabilidade',
     forceUpdate: false,
   });
 });
@@ -221,7 +224,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`VMP SaaS Control Plane v2.3.2 running on port ${PORT}`);
+  console.log(`VMP SaaS Control Plane v2.3.8 running on port ${PORT}`);
   console.log(`API endpoints:`);
   console.log(`  - Auth:           /api/auth`);
   console.log(`  - Licenses:       /api/licenses`);
@@ -242,7 +245,7 @@ app.listen(PORT, () => {
 (async () => {
   try {
     const db = await initDB();
-    
+
     // Iniciar backup scheduler
     startBackupScheduler();
 
