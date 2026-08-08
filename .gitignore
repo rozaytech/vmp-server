@@ -1,5 +1,33 @@
+# Dependencias
 node_modules/
+
+# Base de dados local (SQLite antigo — nao enviar)
 database.db
+*.db
+*.db-journal
+
+# Variaveis de ambiente (credenciais — NUNCA enviar!)
 .env
-package-lock.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Lock files (opcional, mas recomendado enviar package-lock.json para producao)
+# package-lock.json
+
+# Configuracoes de IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Build / deploy
+dist/
+build/
 nixpacks.toml

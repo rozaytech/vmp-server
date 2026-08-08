@@ -1,19 +1,82 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import { v4 as uuidv4 } from 'uuid';
+import { createClient } from "@libsql/client";
+import dotenv from "dotenv";
+import { v4 as uuidv4 } from "uuid";
 
+dotenv.config();
+
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+let client = null;
+
+// =========================================================
+// Criar cliente Turso
+// =========================================================
 export async function getDB() {
-  return open({
-    filename: './database.db',
-    driver: sqlite3.Database,
+  if (client) return client;
+
+  if (!TURSO_URL) {
+    throw new Error("TURSO_DATABASE_URL nao definida. Verifique o ficheiro .env");
+  }
+
+  client = createClient({
+    url: TURSO_URL,
+    authToken: TURSO_TOKEN,
   });
+
+  return client;
 }
 
+// =========================================================
+// Wrapper compativel com a API sqlite anterior
+// =========================================================
 export async function initDB() {
-  const db = await getDB();
+  const turso = await getDB();
+
+  // Wrapper para manter compatibilidade com codigo existente
+  const db = {
+    // INSERT / UPDATE / DELETE
+    async run(sql, params = []) {
+      const result = await turso.execute({ sql, args: params });
+      return {
+        lastID: result.lastInsertRowid ?? null,
+        changes: result.rowsAffected ?? 0,
+      };
+    },
+
+    // SELECT uma linha
+    async get(sql, params = []) {
+      const result = await turso.execute({ sql, args: params });
+      if (!result.rows || result.rows.length === 0) return undefined;
+      const row = result.rows[0];
+      const obj = {};
+      result.columns.forEach((col, i) => {
+        obj[col] = row[i];
+      });
+      return obj;
+    },
+
+    // SELECT multiplas linhas
+    async all(sql, params = []) {
+      const result = await turso.execute({ sql, args: params });
+      if (!result.rows) return [];
+      return result.rows.map((row) => {
+        const obj = {};
+        result.columns.forEach((col, i) => {
+          obj[col] = row[i];
+        });
+        return obj;
+      });
+    },
+
+    // Schema (CREATE TABLE, etc.)
+    async exec(sql) {
+      await turso.executeMultiple(sql);
+    },
+  };
 
   // =========================================================
-  // TABELAS EXISTENTES (SaaS Licensing)
+  // SCHEMA CREATION (igual ao db.js antigo, mas para Turso)
   // =========================================================
   await db.exec(`
     CREATE TABLE IF NOT EXISTS licenses (
@@ -29,14 +92,16 @@ export async function initDB() {
     );
   `);
 
-  const licenseColumns = await db.all(`PRAGMA table_info(licenses)`);
-  const hasSubscriptionId = licenseColumns.some(col => col.name === 'subscription_id');
-  if (!hasSubscriptionId) {
+  // Migration: subscription_id
+  const licenseCols = await db.all(`PRAGMA table_info(licenses)`);
+  const hasSubId = licenseCols.some(col => col.name === 'subscription_id');
+  if (!hasSubId) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN subscription_id TEXT`);
     console.log('[MIGRATION] Adicionada coluna subscription_id a tabela licenses');
   }
 
-  const hasRemotePin = licenseColumns.some(col => col.name === 'remote_pin');
+  // Migration: remote_pin
+  const hasRemotePin = licenseCols.some(col => col.name === 'remote_pin');
   if (!hasRemotePin) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN remote_pin TEXT`);
     console.log('[MIGRATION] Adicionada coluna remote_pin a tabela licenses');
@@ -139,32 +204,6 @@ export async function initDB() {
   `);
 
   // =========================================================
-  // TABELA: Tokens de Acesso Remoto
-  // =========================================================
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS remote_access_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      license_id TEXT NOT NULL,
-      token TEXT NOT NULL UNIQUE,
-      pin_hash TEXT NOT NULL,
-      device_info TEXT,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      last_used_at TEXT,
-      is_revoked INTEGER DEFAULT 0,
-      FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE CASCADE
-    );
-  `);
-
-  await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_remote_tokens_license ON remote_access_tokens(license_id);
-  `);
-
-  await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_remote_tokens_token ON remote_access_tokens(token);
-  `);
-
-  // =========================================================
   // TABELAS POS / VMP SAAS
   // =========================================================
   await db.exec(`
@@ -193,8 +232,7 @@ export async function initDB() {
       description TEXT,
       is_active INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+      updated_at TEXT NOT NULL
     );
   `);
 
@@ -230,8 +268,7 @@ export async function initDB() {
       updated_at TEXT NOT NULL,
       cancelled_at TEXT,
       cancelled_by INTEGER,
-      cancellation_reason TEXT,
-      FOREIGN KEY (user_id) REFERENCES pos_users(id)
+      cancellation_reason TEXT
     );
   `);
 
@@ -246,9 +283,7 @@ export async function initDB() {
       cost_price REAL NOT NULL DEFAULT 0,
       total_price REAL NOT NULL,
       discount REAL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (sale_id) REFERENCES sales(id),
-      FOREIGN KEY (product_id) REFERENCES products(id)
+      created_at TEXT NOT NULL
     );
   `);
 
@@ -260,8 +295,7 @@ export async function initDB() {
       amount REAL NOT NULL,
       change_amount REAL DEFAULT 0,
       reference TEXT,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (sale_id) REFERENCES sales(id)
+      created_at TEXT NOT NULL
     );
   `);
 
@@ -276,9 +310,7 @@ export async function initDB() {
       sale_id INTEGER,
       warehouse_id INTEGER,
       created_by INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (product_id) REFERENCES products(id),
-      FOREIGN KEY (sale_id) REFERENCES sales(id)
+      created_at TEXT NOT NULL
     );
   `);
 
@@ -293,8 +325,7 @@ export async function initDB() {
       status TEXT NOT NULL DEFAULT 'open',
       opened_at TEXT NOT NULL,
       closed_at TEXT,
-      notes TEXT,
-      FOREIGN KEY (user_id) REFERENCES pos_users(id)
+      notes TEXT
     );
   `);
 
@@ -306,9 +337,30 @@ export async function initDB() {
       amount REAL NOT NULL,
       reason TEXT,
       created_by INTEGER,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES cash_sessions(id)
+      created_at TEXT NOT NULL
     );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS remote_access_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      license_id TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      pin_hash TEXT NOT NULL,
+      device_info TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT,
+      is_revoked INTEGER DEFAULT 0
+    );
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_remote_tokens_license ON remote_access_tokens(license_id);
+  `);
+
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_remote_tokens_token ON remote_access_tokens(token);
   `);
 
   // =========================================================
@@ -374,7 +426,6 @@ export async function initDB() {
   for (const lic of orphanedLicenses) {
     const subId = uuidv4();
     const now = new Date();
-    const expiry = new Date(lic.expiry);
 
     await db.run(
       `INSERT INTO subscriptions (
@@ -401,14 +452,29 @@ export async function initDB() {
     console.log(`[MIGRATION] Criada subscricao ${subId} para licenca antiga ${lic.id} (${lic.client})`);
   }
 
-  // Admin do painel (mantido do original)
+  // Admin do painel
   const admin = await db.get(`SELECT * FROM admins WHERE username = 'admin'`);
   if (!admin) {
     await db.run(
       `INSERT INTO admins (username, password, role, created_at) VALUES (?, ?, ?, ?)`,
       ['admin', 'admin123', 'super_admin', new Date().toISOString()]
     );
+    console.log('[SEED] Admin do painel criado (username: admin, password: admin123)');
   }
+
+  // =========================================================
+  // INDEXES adicionais para performance
+  // =========================================================
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_licenses_machine ON licenses(machine_id)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_licenses_subscription ON licenses(subscription_id)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_client ON subscriptions(client)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_subscriptions_email ON subscriptions(email)`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_activation_requests_machine ON activation_requests(machine_id)`);
+
+  console.log('[TURSO] Base de dados inicializada e pronta');
 
   return db;
 }
+
+export default { getDB, initDB };
