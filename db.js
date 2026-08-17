@@ -416,7 +416,10 @@ export async function initDB() {
     console.log('[SEED] POS User admin criado (PIN: 1234)');
   }
 
-  // MIGRATION: Criar subscricoes para licencas antigas
+  // =========================================================
+  // MIGRATION: Criar subscricoes para licencas antigas (COMENTADO PARA EVITAR DUPLICATAS NO FUTURO)
+  // =========================================================
+  /* 
   const orphanedLicenses = await db.all(`
     SELECT l.* FROM licenses l
     LEFT JOIN subscriptions s ON l.subscription_id = s.id
@@ -451,6 +454,7 @@ export async function initDB() {
 
     console.log(`[MIGRATION] Criada subscricao ${subId} para licenca antiga ${lic.id} (${lic.client})`);
   }
+  */
 
   // Admin do painel
   const admin = await db.get(`SELECT * FROM admins WHERE username = 'admin'`);
