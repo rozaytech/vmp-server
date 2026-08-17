@@ -14,7 +14,7 @@ router.use((req, res, next) => {
 });
 
 // =========================================================
-// DASHBOARD STATS
+// DASHBOARD STATS (CORRIGIDO: Ignora subscrições canceladas)
 // =========================================================
 router.get('/stats', async (req, res) => {
   try {
@@ -22,9 +22,12 @@ router.get('/stats', async (req, res) => {
 
     const totalLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses`);
     const activeLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses WHERE status = 'active'`);
-    const totalSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions`);
-    const activeSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active'`);
+    
+    // CORRECAO: Conta APENAS as subscrições pagas ou trials, ignorando as revogadas/expiradas
+    const totalSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE payment_status = 'paid' OR status = 'trial'`);
+    const activeSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active' AND payment_status = 'paid'`);
     const trialSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'trial'`);
+    
     const pendingRequests = await db.get(`SELECT COUNT(*) as count FROM activation_requests WHERE status = 'pending'`);
     const totalRevenue = await db.get(`SELECT SUM(amount) as total FROM payments WHERE status = 'completed'`);
 
@@ -38,6 +41,7 @@ router.get('/stats', async (req, res) => {
       SELECT s.*, l.machine_id
       FROM subscriptions s
       LEFT JOIN licenses l ON l.subscription_id = s.id
+      WHERE s.payment_status = 'paid' OR s.status = 'trial'
       ORDER BY s.created_at DESC
       LIMIT 5
     `);
@@ -91,7 +95,7 @@ router.get('/activation-requests', async (req, res) => {
 });
 
 // =========================================================
-// APPROVE REQUEST — CORRIGIDO
+// APPROVE REQUEST
 // =========================================================
 router.post('/activation-requests/:id/approve', async (req, res) => {
   try {
@@ -112,16 +116,14 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
       });
     }
 
-    // CORRECAO: generateLicense agora aceita 5 args, passar null para isTrial
     const result = await generateLicense(
       request.machine_id,
       request.client_email,
       request.plan,
       365,
-      false // isTrial = false para aprovacao manual
+      false
     );
 
-    // CORRECAO: validar retorno
     if (!result || !result.licenseKey) {
       console.error('GENERATE LICENSE RETURNED INVALID:', result);
       return res.status(500).json({
@@ -130,8 +132,6 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
       });
     }
 
-    // CORRECAO: usar result.licenseId (UUID) em vez de fazer parse do base64
-    // O formato da licenca do servidor nao e JSON, e machineId:plan:expiry:subId:timestamp:signature
     const licenseId = result.licenseId;
 
     await db.run(
@@ -139,7 +139,6 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
       [licenseId, req.params.id]
     );
 
-    // CORRECAO: usar result.licenseKey em vez de result.license
     const template = licenseApprovedTemplate(
       request.client_email,
       result.licenseKey,
@@ -150,7 +149,7 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
 
     return res.json({
       success: true,
-      license: result.licenseKey,        // CORRECAO: licenseKey
+      license: result.licenseKey,
       licenseId: result.licenseId,
       subscription: result.subscription,
       message: 'Licença aprovada e enviada por email',
