@@ -225,7 +225,6 @@ export async function rejectRequest(req, res) {
   }
 }
 
-// NOVA FUNÇÃO: Apagar licença
 export async function deleteLicense(req, res) {
   try {
     const { id } = req.params;
@@ -262,17 +261,23 @@ export async function markAsPaid(req, res) {
       plan: license.plan,
     });
 
-    // Atualizar licença vinculando a subscrição e marcando como paga
+    // CORREÇÃO CRÍTICA: A coluna payment_status está na tabela subscriptions, não em licenses
+    // 1. Atualizar licença vinculando a subscrição
     await db.run(
-      `UPDATE licenses SET payment_status = 'paid', subscription_id = ? WHERE id = ?`,
+      `UPDATE licenses SET subscription_id = ? WHERE id = ?`,
       [subscription.id, licenseId]
+    );
+
+    // 2. Atualizar estado de pagamento da subscrição corretamente
+    await db.run(
+      `UPDATE subscriptions SET payment_status = 'paid' WHERE id = ?`,
+      [subscription.id]
     );
 
     // Registrar o pagamento no módulo de faturação
     const paymentId = crypto.randomUUID();
     const amount = PLANS[license.plan]?.price || 0;
     
-    // CORRECAO: Adicionado currency 'MZN' no INSERT para respeitar o schema NOT NULL da tabela payments
     await db.run(
       `INSERT INTO payments (id, subscription_id, client, amount, currency, status, provider, reference)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
