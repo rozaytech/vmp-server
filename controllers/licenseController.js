@@ -255,33 +255,33 @@ export async function markAsPaid(req, res) {
       return res.status(400).json({ error: 'already_paid', message: 'Esta licença já está marcada como paga' });
     }
 
-    // Criar subscrição utilizando o serviço de subscription
     const subscription = await createSubscription({
       client: license.client,
       plan: license.plan,
     });
 
-    // CORREÇÃO CRÍTICA: A coluna payment_status está na tabela subscriptions, não em licenses
     // 1. Atualizar licença vinculando a subscrição
     await db.run(
       `UPDATE licenses SET subscription_id = ? WHERE id = ?`,
       [subscription.id, licenseId]
     );
 
-    // 2. Atualizar estado de pagamento da subscrição corretamente
+    // 2. Atualizar estado de pagamento da subscrição
     await db.run(
       `UPDATE subscriptions SET payment_status = 'paid' WHERE id = ?`,
       [subscription.id]
     );
 
-    // Registrar o pagamento no módulo de faturação
     const paymentId = crypto.randomUUID();
     const amount = PLANS[license.plan]?.price || 0;
     
+    // CORREÇÃO: Adicionado a variável now e a coluna created_at no INSERT
+    const now = new Date().toISOString();
+    
     await db.run(
-      `INSERT INTO payments (id, subscription_id, client, amount, currency, status, provider, reference)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [paymentId, subscription.id, license.client, amount, 'MZN', 'completed', 'manual', `MANUAL-${Date.now()}`]
+      `INSERT INTO payments (id, subscription_id, client, amount, currency, status, provider, reference, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [paymentId, subscription.id, license.client, amount, 'MZN', 'completed', 'manual', `MANUAL-${Date.now()}`, now]
     );
 
     return res.json({
