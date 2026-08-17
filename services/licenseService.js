@@ -9,18 +9,12 @@ function hashLicense(data) {
   return crypto.createHmac("sha256", SECRET_KEY).update(data).digest("hex");
 }
 
-// =========================================================
-// EXPORTADO: gerar license key
-// =========================================================
 export function generateLicenseKey(machineId, plan, expiry, subscriptionId) {
   const payload = `${machineId}:${plan}:${expiry}:${subscriptionId}:${Date.now()}`;
   const signature = hashLicense(payload);
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 
-// =========================================================
-// DIAS CORRETOS POR PLANO
-// =========================================================
 export function getPlanDurationDays(plan, isTrial = false) {
   if (isTrial) return 7;
   switch (plan) {
@@ -31,9 +25,6 @@ export function getPlanDurationDays(plan, isTrial = false) {
   }
 }
 
-// =========================================================
-// EXPORTADO: criar entrada de licenca
-// =========================================================
 export async function createLicenseEntry({ machineId, client, plan, expiry, subscriptionId, isTrial = false }) {
   const db = await initDB();
   const licenseId = uuidv4();
@@ -55,9 +46,6 @@ export async function createLicenseEntry({ machineId, client, plan, expiry, subs
   return { licenseId, licenseKey };
 }
 
-// =========================================================
-// GERAR LICENCA COMPLETA (subscricao + licenca)
-// =========================================================
 export async function generateLicense(machineId, client, plan, customDays, isTrial = false) {
   const db = await initDB();
 
@@ -70,7 +58,6 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     throw new Error("invalid_plan");
   }
 
-  // Bloquear trial duplicado para o mesmo machineId
   if (isTrial) {
     const existingTrial = await db.get(
       `SELECT l.* FROM licenses l
@@ -93,7 +80,6 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
   const licenseId = uuidv4();
   const email = client.includes('@') ? client : null;
 
-  // Criar subscricao
   await db.run(
     `INSERT INTO subscriptions (
       id, client, email, plan, status, start_date, expiry_date,
@@ -113,7 +99,6 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     ]
   );
 
-  // Criar licenca
   const licenseKey = generateLicenseKey(machineId, plan, expiry.toISOString(), subscriptionId);
 
   await db.run(
@@ -161,18 +146,10 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
   };
 }
 
-// =========================================================
-// VALIDAR LICENCA
-// CORRECAO CRITICA: consulta a DB PRIMEIRO antes de
-// verificar expiracao do payload base64. Se a licenca foi
-// renovada no painel, usa os dados da DB e retorna uma
-// nova license key para o Flutter sincronizar.
-// =========================================================
 export async function validateLicense(licenseKey, machineId) {
   const db = await initDB();
   const now = new Date();
 
-  // --- PASSO 1: Decodificar e validar formato/assinatura ---
   let decoded;
   try {
     decoded = Buffer.from(licenseKey, "base64").toString("utf-8");
@@ -198,7 +175,6 @@ export async function validateLicense(licenseKey, machineId) {
     return { valid: false, error: "machine_mismatch" };
   }
 
-  // --- PASSO 2: Consultar a DB por subscription_id ---
   let dbLicense = await db.get(
     `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
      FROM licenses l
@@ -208,7 +184,6 @@ export async function validateLicense(licenseKey, machineId) {
     [subscriptionId]
   );
 
-  // --- PASSO 3: Fallback por machine_id ativa ---
   if (!dbLicense) {
     dbLicense = await db.get(
       `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
@@ -220,9 +195,7 @@ export async function validateLicense(licenseKey, machineId) {
     );
   }
 
-  // --- PASSO 4: Se nao encontrou na DB, verificar payload ---
   if (!dbLicense) {
-    // Verificar se o payload local ainda e valido
     const payloadExpiry = new Date(expiryStr);
     if (payloadExpiry < now) {
       return { valid: false, error: "expired", expiry: expiryStr };
@@ -230,11 +203,9 @@ export async function validateLicense(licenseKey, machineId) {
     return { valid: false, error: "revoked" };
   }
 
-  // --- PASSO 5: Usar dados da DB (fonte da verdade) ---
   const dbExpiry = new Date(dbLicense.expiry);
   const dbPlan = dbLicense.plan || planFromPayload;
 
-  // Se a DB diz que expirou, bloqueia
   if (dbExpiry < now) {
     return {
       valid: false,
@@ -244,13 +215,10 @@ export async function validateLicense(licenseKey, machineId) {
     };
   }
 
-  // Se a subscricao foi cancelada/revogada
   if (dbLicense.sub_status === 'cancelled' || dbLicense.sub_status === 'revoked') {
     return { valid: false, error: "revoked" };
   }
 
-  // --- PASSO 6: Gerar NOVA license key com dados atualizados ---
-  // Isso garante que o Flutter salve a nova key com expiry correto
   const newLicenseKey = generateLicenseKey(
     machineId,
     dbPlan,
@@ -258,7 +226,6 @@ export async function validateLicense(licenseKey, machineId) {
     dbLicense.subscription_id || subscriptionId
   );
 
-  // Atualizar last_validation
   await db.run(
     `UPDATE licenses SET last_validation = ? WHERE id = ?`,
     [now.toISOString(), dbLicense.id]
@@ -268,8 +235,8 @@ export async function validateLicense(licenseKey, machineId) {
 
   return {
     valid: true,
-    license: newLicenseKey,         // NOVA key para o Flutter sincronizar
-    licenseKey: newLicenseKey,      // backward compatibility
+    license: newLicenseKey,
+    licenseKey: newLicenseKey,
     plan: dbPlan,
     expiry: dbLicense.expiry,
     daysRemaining: Math.max(0, daysRemaining),
@@ -281,10 +248,6 @@ export async function validateLicense(licenseKey, machineId) {
   };
 }
 
-// =========================================================
-// NOVO: Buscar licenca ativa por machine_id
-// Usado pelo botao "Verificar Estado Online" no Flutter
-// =========================================================
 export async function getLicenseByMachineId(machineId) {
   const db = await initDB();
 
@@ -305,7 +268,6 @@ export async function getLicenseByMachineId(machineId) {
   const dbExpiry = new Date(dbLicense.expiry);
   const isExpired = dbExpiry < now;
 
-  // Se expirou na DB, nao retorna licenca valida
   if (isExpired) {
     return {
       license: null,
@@ -317,7 +279,6 @@ export async function getLicenseByMachineId(machineId) {
     };
   }
 
-  // Gerar nova license key com dados atualizados
   const newLicenseKey = generateLicenseKey(
     machineId,
     dbLicense.plan,
@@ -341,10 +302,6 @@ export async function getLicenseByMachineId(machineId) {
   };
 }
 
-// =========================================================
-// NOVO: Buscar status da licenca por machine_id
-// Endpoint leve para verificacao rapida
-// =========================================================
 export async function getLicenseStatusByMachineId(machineId) {
   const db = await initDB();
 
@@ -378,9 +335,6 @@ export async function getLicenseStatusByMachineId(machineId) {
   };
 }
 
-// =========================================================
-// TRANSFERIR LICENCA
-// =========================================================
 export async function transferLicense(oldLicenseId, newMachineId, reason) {
   const db = await initDB();
 
@@ -460,9 +414,6 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
   };
 }
 
-// =========================================================
-// LISTAR LICENCAS
-// =========================================================
 export async function listLicenses(filters = {}) {
   const db = await initDB();
 
@@ -504,9 +455,6 @@ export async function listLicenses(filters = {}) {
   return licenses;
 }
 
-// =========================================================
-// REVOGAR LICENCA
-// =========================================================
 export async function revokeLicense(licenseId, reason) {
   const db = await initDB();
   const now = new Date().toISOString();
@@ -524,9 +472,6 @@ export async function revokeLicense(licenseId, reason) {
   return { success: true, licenseId, revokedAt: now };
 }
 
-// =========================================================
-// REATIVAR LICENCA
-// =========================================================
 export async function reactivateLicense(licenseId, newDays = null, newMachineId = null) {
   const db = await initDB();
   const now = new Date();
@@ -575,9 +520,6 @@ export async function reactivateLicense(licenseId, newDays = null, newMachineId 
   };
 }
 
-// =========================================================
-// EDITAR LICENCA
-// =========================================================
 export async function updateLicense(licenseId, { plan, expiry, status, client, machineId }) {
   const db = await initDB();
 
@@ -602,7 +544,6 @@ export async function updateLicense(licenseId, { plan, expiry, status, client, m
   values.push(licenseId);
   await db.run(`UPDATE licenses SET ${updates.join(", ")} WHERE id = ?`, values);
 
-  // Sincronizar subscricao
   if (plan !== undefined || expiry !== undefined || status !== undefined) {
     const subUpdates = [];
     const subValues = [];
