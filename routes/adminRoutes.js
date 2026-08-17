@@ -5,16 +5,12 @@ import { sendEmail, licenseApprovedTemplate } from '../services/emailService_sen
 
 const router = express.Router();
 
-// =========================================================
-// MIDDLEWARE: verificar auth básica (mock)
-// Em produção: usar JWT middleware
-// =========================================================
 router.use((req, res, next) => {
   next();
 });
 
 // =========================================================
-// DASHBOARD STATS (CORRIGIDO: Ignora subscrições canceladas)
+// DASHBOARD STATS (CORRIGIDO: Ignora subscrições apagadas)
 // =========================================================
 router.get('/stats', async (req, res) => {
   try {
@@ -23,7 +19,7 @@ router.get('/stats', async (req, res) => {
     const totalLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses`);
     const activeLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses WHERE status = 'active'`);
     
-    // CORRECAO: Conta APENAS as subscrições pagas ou trials, ignorando as revogadas/expiradas
+    // CORRECAO: Conta APENAS as subscrições pagas ou trials (ignora as apagadas/inativas)
     const totalSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE payment_status = 'paid' OR status = 'trial'`);
     const activeSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active' AND payment_status = 'paid'`);
     const trialSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'trial'`);
@@ -37,6 +33,7 @@ router.get('/stats', async (req, res) => {
       LIMIT 5
     `);
 
+    // CORRECAO: Lista recente apenas com subscrições pagas ou trial
     const recentSubscriptions = await db.all(`
       SELECT s.*, l.machine_id
       FROM subscriptions s
@@ -125,7 +122,6 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
     );
 
     if (!result || !result.licenseKey) {
-      console.error('GENERATE LICENSE RETURNED INVALID:', result);
       return res.status(500).json({
         error: 'license_generation_failed',
         message: 'Falha ao gerar licenca',
@@ -184,14 +180,7 @@ router.post('/activation-requests/:id/reject', async (req, res) => {
     await sendEmail({
       to: request.client_email,
       subject: 'VMP SaaS - Pedido Rejeitado',
-      body: `Olá,
-
-Lamentamos informar que o seu pedido de ativação foi rejeitado.
-
-Se acredita que se trata de um erro, contacte o nosso suporte.
-
-Obrigado,
-Equipa VMP SaaS`,
+      body: `Olá,\n\nLamentamos informar que o seu pedido de ativação foi rejeitado.\n\nSe acredita que se trata de um erro, contacte o nosso suporte.\n\nObrigado,\nEquipa VMP SaaS`,
     });
 
     return res.json({ success: true, message: 'Pedido rejeitado' });
@@ -203,7 +192,7 @@ Equipa VMP SaaS`,
 });
 
 // =========================================================
-// ALL SUBSCRIPTIONS
+// ALL SUBSCRIPTIONS (CORRECAO: Mostra apenas as ativas pagas ou trials)
 // =========================================================
 router.get('/subscriptions', async (req, res) => {
   try {
@@ -214,11 +203,12 @@ router.get('/subscriptions', async (req, res) => {
       SELECT s.*, l.machine_id, l.id as license_id
       FROM subscriptions s
       LEFT JOIN licenses l ON l.subscription_id = s.id
+      WHERE s.payment_status = 'paid' OR s.status = 'trial'
     `;
     let params = [];
 
     if (status && status !== 'all') {
-      query += ` WHERE s.status = ?`;
+      query += ` AND s.status = ?`;
       params.push(status);
     }
 
@@ -235,7 +225,7 @@ router.get('/subscriptions', async (req, res) => {
 });
 
 // =========================================================
-// ALL LICENSES
+// ALL LICENSES (Lista completa)
 // =========================================================
 router.get('/licenses', async (req, res) => {
   try {
