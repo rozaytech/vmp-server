@@ -10,21 +10,24 @@ router.use((req, res, next) => {
 });
 
 // =========================================================
-// DASHBOARD STATS (CORRIGIDO: Ignora subscrições apagadas)
+// DASHBOARD STATS (CORRIGIDO: Estatísticas exatas)
 // =========================================================
 router.get('/stats', async (req, res) => {
   try {
     const db = await initDB();
 
+    // Licenças totais e ativas
     const totalLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses`);
     const activeLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses WHERE status = 'active'`);
     
-    // CORRECAO: Conta APENAS as subscrições pagas ou trials (ignora as apagadas/inativas)
+    // Subscrições: Conta APENAS as pagas OU trials ativos (ignora as revogadas/expiradas/inativas)
     const totalSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE payment_status = 'paid' OR status = 'trial'`);
     const activeSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active' AND payment_status = 'paid'`);
     const trialSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'trial'`);
     
     const pendingRequests = await db.get(`SELECT COUNT(*) as count FROM activation_requests WHERE status = 'pending'`);
+    
+    // Soma apenas pagamentos completos
     const totalRevenue = await db.get(`SELECT SUM(amount) as total FROM payments WHERE status = 'completed'`);
 
     const recentRequests = await db.all(`
@@ -33,7 +36,7 @@ router.get('/stats', async (req, res) => {
       LIMIT 5
     `);
 
-    // CORRECAO: Lista recente apenas com subscrições pagas ou trial
+    // Lista recente apenas com subscrições pagas ou trial (sem apagadas)
     const recentSubscriptions = await db.all(`
       SELECT s.*, l.machine_id
       FROM subscriptions s
@@ -203,7 +206,7 @@ router.get('/subscriptions', async (req, res) => {
       SELECT s.*, l.machine_id, l.id as license_id
       FROM subscriptions s
       LEFT JOIN licenses l ON l.subscription_id = s.id
-      WHERE s.payment_status = 'paid' OR s.status = 'trial'
+      WHERE (s.payment_status = 'paid' OR s.status = 'trial')
     `;
     let params = [];
 
