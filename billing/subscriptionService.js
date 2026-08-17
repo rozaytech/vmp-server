@@ -10,14 +10,16 @@ export async function createSubscription({ client, plan }) {
 
   const id = crypto.randomUUID();
 
+  const now = new Date();
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + selectedPlan.days);
 
+  // CORRECAO: Adicionados start_date, payment_status e created_at (obrigatorios no schema Turso)
   await db.run(
     `INSERT INTO subscriptions 
-     (id, client, plan, status, expiry)
-     VALUES (?, ?, ?, ?, ?)`,
-    [id, client, plan, "active", expiry.toISOString()]
+     (id, client, plan, status, start_date, expiry_date, payment_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, client, plan, "active", now.toISOString(), expiry.toISOString(), "pending", now.toISOString()]
   );
 
   return { id, expiry };

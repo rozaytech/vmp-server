@@ -12,6 +12,8 @@ import {
   getById,
   approveRequest,
   rejectRequest,
+  deleteLicense,
+  markAsPaid,
 } from '../controllers/licenseController.js';
 
 const router = express.Router();
@@ -58,5 +60,15 @@ router.post('/approve-request', approveRequest);
 
 // POST /api/licenses/reject-request
 router.post('/reject-request', rejectRequest);
+
+// =========================================================
+// NOVAS ROTAS PARA O PAINEL ADMIN (Licenses.jsx)
+// =========================================================
+
+// DELETE /api/licenses/:id
+router.delete('/:id', deleteLicense);
+
+// POST /api/licenses/pay
+router.post('/pay', markAsPaid);
 
 export default router;

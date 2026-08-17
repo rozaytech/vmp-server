@@ -9,6 +9,10 @@ import {
   getLicenseByMachineId,
   getLicenseStatusByMachineId,
 } from '../services/licenseService.js';
+import { initDB } from '../db.js';
+import { createSubscription } from '../billing/subscriptionService.js';
+import { PLANS } from '../billing/plans.js';
+import crypto from 'crypto';
 
 export async function generate(req, res) {
   try {
@@ -58,10 +62,6 @@ export async function validate(req, res) {
   }
 }
 
-// =========================================================
-// NOVO: Buscar licenca ativa por machine_id
-// GET /api/licenses/machine/:machineId
-// =========================================================
 export async function getByMachineId(req, res) {
   try {
     const { machineId } = req.params;
@@ -70,7 +70,7 @@ export async function getByMachineId(req, res) {
       return res.status(400).json({
         success: false,
         error: 'missing_machine_id',
-        message: 'machineId e obrigatorio',
+        message: 'machineId é obrigatório',
       });
     }
 
@@ -80,96 +80,64 @@ export async function getByMachineId(req, res) {
       return res.status(404).json({
         success: false,
         error: 'not_found',
-        message: 'Nenhuma licenca encontrada para este dispositivo.',
+        message: 'Nenhuma licença encontrada para este dispositivo.',
       });
     }
-
+    
     return res.json({
       success: true,
-      ...result,
+      license: result,
     });
   } catch (e) {
-    console.error('GET LICENSE BY MACHINE ERROR:', e);
+    console.error(e);
     return res.status(500).json({
       success: false,
-      error: 'server_error',
-      message: e.message,
-    });
-  }
-}
-
-// =========================================================
-// NOVO: Status da licenca por machine_id
-// GET /api/licenses/status/:machineId
-// =========================================================
-export async function getStatusByMachineId(req, res) {
-  try {
-    const { machineId } = req.params;
-
-    if (!machineId) {
-      return res.status(400).json({
-        success: false,
-        error: 'missing_machine_id',
-        message: 'machineId e obrigatorio',
-      });
-    }
-
-    const result = await getLicenseStatusByMachineId(machineId);
-
-    if (!result.exists) {
-      return res.status(404).json({
-        success: false,
-        error: 'not_found',
-        message: 'Nenhuma licenca encontrada para este dispositivo.',
-      });
-    }
-
-    return res.json({
-      success: true,
-      ...result,
-    });
-  } catch (e) {
-    console.error('GET LICENSE STATUS ERROR:', e);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: e.message,
-    });
-  }
-}
-
-export async function transfer(req, res) {
-  try {
-    const { oldLicenseId, newMachineId, reason } = req.body;
-
-    if (!oldLicenseId || !newMachineId) {
-      return res.status(400).json({
-        error: 'missing_fields',
-        message: 'oldLicenseId e newMachineId sao obrigatorios',
-      });
-    }
-
-    const result = await transferLicense(oldLicenseId, newMachineId, reason);
-    return res.json(result);
-  } catch (e) {
-    console.error('TRANSFER LICENSE ERROR:', e);
-    return res.status(500).json({
       error: 'server_error',
       details: e.message,
     });
   }
 }
 
+export async function getStatusByMachineId(req, res) {
+  try {
+    const { machineId } = req.params;
+    if (!machineId) {
+      return res.status(400).json({ success: false, error: 'missing_machine_id' });
+    }
+    const status = await getLicenseStatusByMachineId(machineId);
+    return res.json({ success: true, status });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
+  }
+}
+
+export async function list(req, res) {
+  try {
+    const { status, client } = req.query;
+    const result = await listLicenses(status, client);
+    return res.json({ success: true, data: result });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
+  }
+}
+
+export async function transfer(req, res) {
+  try {
+    const { oldLicenseId, newMachineId, reason } = req.body;
+    const result = await transferLicense(oldLicenseId, newMachineId, reason);
+    return res.json({ success: true, ...result });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
+  }
+}
+
 export async function revoke(req, res) {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
-
-    const result = await revokeLicense(id, reason);
-    return res.json(result);
+    const result = await revokeLicense(id);
+    return res.json({ success: true, ...result });
   } catch (e) {
-    console.error('REVOKE LICENSE ERROR:', e);
-    return res.status(500).json({ error: 'server_error' });
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
   }
 }
 
@@ -177,194 +145,148 @@ export async function reactivate(req, res) {
   try {
     const { id } = req.params;
     const { days, machineId } = req.body;
-
     const result = await reactivateLicense(id, days, machineId);
-    return res.json(result);
+    return res.json({ success: true, ...result });
   } catch (e) {
-    console.error('REACTIVATE LICENSE ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-      details: e.message,
-    });
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
   }
 }
 
 export async function update(req, res) {
   try {
     const { id } = req.params;
-    const result = await updateLicense(id, req.body);
-    return res.json(result);
+    const { plan, status, expiry, client, machineId } = req.body;
+    const result = await updateLicense(id, { plan, status, expiry, client, machineId });
+    return res.json({ success: true, license: result });
   } catch (e) {
-    console.error('UPDATE LICENSE ERROR:', e);
-    if (e.message === 'license_not_found') {
-      return res.status(404).json({ error: 'not_found' });
-    }
-    if (e.message === 'no_fields_to_update') {
-      return res.status(400).json({ error: 'no_fields_to_update' });
-    }
-    return res.status(500).json({
-      error: 'server_error',
-      details: e.message,
-    });
-  }
-}
-
-export async function list(req, res) {
-  try {
-    const { status, plan, client } = req.query;
-    const licenses = await listLicenses({ status, plan, client });
-
-    return res.json({
-      success: true,
-      data: licenses,
-      count: licenses.length,
-    });
-  } catch (e) {
-    console.error('LIST LICENSES ERROR:', e);
-    return res.status(500).json({ error: 'server_error' });
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
   }
 }
 
 export async function getById(req, res) {
   try {
-    const { initDB } = await import('../db.js');
-    const db = await initDB();
     const { id } = req.params;
-
-    const license = await db.get(
-      `SELECT l.*, s.payment_status, s.start_date, s.auto_renew
-       FROM licenses l
-       LEFT JOIN subscriptions s ON l.subscription_id = s.id
-       WHERE l.id = ?`,
-      [id]
-    );
-
-    if (!license) {
-      return res.status(404).json({ error: 'not_found' });
-    }
-
-    return res.json({ success: true, data: license });
+    const db = await initDB();
+    const license = await db.get(`SELECT * FROM licenses WHERE id = ?`, [id]);
+    if (!license) return res.status(404).json({ error: 'not_found' });
+    return res.json({ success: true, license });
   } catch (e) {
-    return res.status(500).json({ error: 'server_error' });
+    return res.status(500).json({ success: false, error: 'server_error', details: e.message });
   }
 }
 
 export async function approveRequest(req, res) {
   try {
-    const { requestId, adminEmail } = req.body;
-
-    if (!requestId) {
-      return res.status(400).json({
-        error: 'missing_fields',
-        message: 'requestId e obrigatorio',
-      });
-    }
-
-    const { initDB } = await import('../db.js');
     const db = await initDB();
-
     const request = await db.get(
       `SELECT * FROM activation_requests WHERE id = ?`,
-      [requestId]
+      [req.params.id]
     );
-
-    if (!request) {
-      return res.status(404).json({ error: 'request_not_found' });
-    }
-
+    if (!request) return res.status(404).json({ error: 'not_found' });
     if (request.status !== 'pending') {
-      return res.status(400).json({
-        error: 'already_processed',
-        message: `Pedido ja esta ${request.status}`,
-      });
+      return res.status(400).json({ error: 'already_processed', message: 'Este pedido já foi processado' });
     }
-
     const result = await generateLicense(
       request.machine_id,
       request.client_email,
       request.plan,
-      null
+      365,
+      false
     );
-
-    const now = new Date().toISOString();
+    if (!result || !result.licenseKey) {
+      return res.status(500).json({ error: 'license_generation_failed' });
+    }
+    const licenseId = result.licenseId;
     await db.run(
-      `UPDATE activation_requests SET status = ?, license_id = ?, approved_at = ?, approved_by = ? WHERE id = ?`,
-      ['approved', result.licenseId, now, adminEmail || 'admin', requestId]
+      `UPDATE activation_requests SET status = 'approved', license_id = ? WHERE id = ?`,
+      [licenseId, req.params.id]
     );
-
-    await db.run(
-      `INSERT INTO license_logs (license_id, machine_id, action, created_at) VALUES (?, ?, ?, ?)`,
-      [result.licenseId, request.machine_id, 'approved_remote', now]
-    );
-
-    return res.json({
-      success: true,
-      message: 'Licenca aprovada e gerada com sucesso',
-      license: {
-        licenseId: result.licenseId,
-        licenseKey: result.licenseKey,
-        plan: result.plan,
-        expiry: result.expiry,
-      },
-      requestId,
-    });
-
+    return res.json({ success: true, license: result.licenseKey, licenseId: result.licenseId });
   } catch (e) {
-    console.error('APPROVE REQUEST ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-      details: e.message,
-    });
+    return res.status(500).json({ error: 'server_error', details: e.message });
   }
 }
 
 export async function rejectRequest(req, res) {
   try {
-    const { requestId, reason } = req.body;
-
-    if (!requestId) {
-      return res.status(400).json({
-        error: 'missing_fields',
-        message: 'requestId e obrigatorio',
-      });
-    }
-
-    const { initDB } = await import('../db.js');
     const db = await initDB();
-
     const request = await db.get(
       `SELECT * FROM activation_requests WHERE id = ?`,
-      [requestId]
+      [req.params.id]
+    );
+    if (!request) return res.status(404).json({ error: 'not_found' });
+    await db.run(
+      `UPDATE activation_requests SET status = 'rejected' WHERE id = ?`,
+      [req.params.id]
+    );
+    return res.json({ success: true, message: 'Pedido rejeitado' });
+  } catch (e) {
+    return res.status(500).json({ error: 'server_error', details: e.message });
+  }
+}
+
+// NOVA FUNÇÃO: Apagar licença
+export async function deleteLicense(req, res) {
+  try {
+    const { id } = req.params;
+    const db = await initDB();
+    const existing = await db.get(`SELECT id FROM licenses WHERE id = ?`, [id]);
+    if (!existing) {
+      return res.status(404).json({ error: 'not_found', message: 'Licença não encontrada' });
+    }
+    await db.run(`DELETE FROM licenses WHERE id = ?`, [id]);
+    return res.json({ success: true, message: 'Licença apagada com sucesso' });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'server_error', details: e.message });
+  }
+}
+
+// NOVA FUNÇÃO: Marcar licença como paga, criar subscrição e registar faturamento
+export async function markAsPaid(req, res) {
+  try {
+    const { licenseId } = req.body;
+    const db = await initDB();
+
+    const license = await db.get(`SELECT * FROM licenses WHERE id = ?`, [licenseId]);
+    if (!license) {
+      return res.status(404).json({ error: 'not_found', message: 'Licença não encontrada' });
+    }
+    if (license.payment_status === 'paid') {
+      return res.status(400).json({ error: 'already_paid', message: 'Esta licença já está marcada como paga' });
+    }
+
+    // Criar subscrição utilizando o serviço de subscription
+    const subscription = await createSubscription({
+      client: license.client,
+      plan: license.plan,
+    });
+
+    // Atualizar licença vinculando a subscrição e marcando como paga
+    await db.run(
+      `UPDATE licenses SET payment_status = 'paid', subscription_id = ? WHERE id = ?`,
+      [subscription.id, licenseId]
     );
 
-    if (!request) {
-      return res.status(404).json({ error: 'request_not_found' });
-    }
-
-    if (request.status !== 'pending') {
-      return res.status(400).json({
-        error: 'already_processed',
-        message: `Pedido ja esta ${request.status}`,
-      });
-    }
-
-    const now = new Date().toISOString();
+    // Registrar o pagamento no módulo de faturação
+    const paymentId = crypto.randomUUID();
+    const amount = PLANS[license.plan]?.price || 0;
+    
+    // CORRECAO: Adicionado currency 'MZN' no INSERT para respeitar o schema NOT NULL da tabela payments
     await db.run(
-      `UPDATE activation_requests SET status = ?, rejected_at = ?, rejection_reason = ? WHERE id = ?`,
-      ['rejected', now, reason || 'Sem motivo', requestId]
+      `INSERT INTO payments (id, subscription_id, client, amount, currency, status, provider, reference)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [paymentId, subscription.id, license.client, amount, 'MZN', 'completed', 'manual', `MANUAL-${Date.now()}`]
     );
 
     return res.json({
       success: true,
-      message: 'Pedido rejeitado',
-      requestId,
+      message: 'Licença paga e convertida em subscrição com sucesso',
+      subscriptionId: subscription.id,
+      expiry: subscription.expiry,
     });
-
   } catch (e) {
-    console.error('REJECT REQUEST ERROR:', e);
-    return res.status(500).json({
-      error: 'server_error',
-      details: e.message,
-    });
+    console.error(e);
+    return res.status(500).json({ error: 'server_error', details: e.message });
   }
 }
