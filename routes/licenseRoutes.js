@@ -14,6 +14,7 @@ import {
   rejectRequest,
   deleteLicense,
   markAsPaid,
+  generateOfflineCode, // NOVO: Importação da função
 } from '../controllers/licenseController.js';
 
 const router = express.Router();
@@ -70,5 +71,10 @@ router.delete('/:id', deleteLicense);
 
 // POST /api/licenses/pay
 router.post('/pay', markAsPaid);
+
+// =========================================================
+// NOVA ROTA: Geração de Código Offline
+// =========================================================
+router.post('/generate-offline-code', generateOfflineCode);
 
 export default router;

@@ -241,7 +241,6 @@ export async function deleteLicense(req, res) {
   }
 }
 
-// NOVA FUNÇÃO: Marcar licença como paga, criar subscrição e registar faturamento
 export async function markAsPaid(req, res) {
   try {
     const { licenseId } = req.body;
@@ -260,13 +259,11 @@ export async function markAsPaid(req, res) {
       plan: license.plan,
     });
 
-    // 1. Atualizar licença vinculando a subscrição
     await db.run(
       `UPDATE licenses SET subscription_id = ? WHERE id = ?`,
       [subscription.id, licenseId]
     );
 
-    // 2. Atualizar estado de pagamento da subscrição
     await db.run(
       `UPDATE subscriptions SET payment_status = 'paid' WHERE id = ?`,
       [subscription.id]
@@ -275,7 +272,6 @@ export async function markAsPaid(req, res) {
     const paymentId = crypto.randomUUID();
     const amount = PLANS[license.plan]?.price || 0;
     
-    // CORREÇÃO: Adicionado a variável now e a coluna created_at no INSERT
     const now = new Date().toISOString();
     
     await db.run(
@@ -292,6 +288,46 @@ export async function markAsPaid(req, res) {
     });
   } catch (e) {
     console.error(e);
+    return res.status(500).json({ error: 'server_error', details: e.message });
+  }
+}
+
+// =========================================================
+// NOVA FUNÇÃO: Gerar Código de Renovação Offline (HMAC)
+// =========================================================
+export async function generateOfflineCode(req, res) {
+  try {
+    const { machineId, days = 30 } = req.body;
+
+    if (!machineId) {
+      return res.status(400).json({ error: 'missing_machine_id' });
+    }
+
+    const db = await initDB();
+    const license = await db.get(`SELECT * FROM licenses WHERE machine_id = ?`, [machineId]);
+
+    if (!license) {
+      return res.status(404).json({ error: 'license_not_found', message: 'Nenhuma licença encontrada para este Machine ID.' });
+    }
+
+    // Calcular a nova data de expiração com base nos dias (padrão: 30)
+    const newExpiry = new Date();
+    newExpiry.setDate(newExpiry.getDate() + days);
+    const expiryStr = newExpiry.toISOString();
+
+    // Chave secreta deve ser a mesma usada no Flutter (SaasLockEngine)
+    const secret = 'vmp-saas-secret-2026';
+    const payload = `${machineId}|${expiryStr}`;
+    
+    // Gerar a assinatura HMAC-SHA256
+    const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex').toUpperCase();
+    
+    // Formato do código: MACHINE_ID-DATA_EXPIRACAO-HASH
+    const code = `${machineId}-${expiryStr}-${signature}`;
+
+    return res.json({ success: true, code });
+  } catch (e) {
+    console.error('ERRO AO GERAR CÓDIGO OFFLINE:', e);
     return res.status(500).json({ error: 'server_error', details: e.message });
   }
 }
