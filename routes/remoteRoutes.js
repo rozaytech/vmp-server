@@ -97,7 +97,7 @@ router.post('/auth', async (req, res) => {
       customFeatures = [];
     }
 
-    // Permite acesso se for Enterprise OU se tiver remote_dashboard nas funcionalidades personalizadas
+    // CORREÇÃO: Permite acesso se for Enterprise OU se tiver remote_dashboard nas funcionalidades personalizadas
     const hasRemoteDashboardFeature = plan === 'enterprise' || customFeatures.includes('remote_dashboard');
     if (!hasRemoteDashboardFeature) {
       return res.status(403).json({
@@ -416,6 +416,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
       const clientSaleId = saleData.id;
 
       try {
+        // 1. Idempotência: já existe?
         const existing = await db.get(
           `SELECT id FROM sales WHERE client_sale_id = ? AND license_id = ?`,
           [clientSaleId, licenseId]
@@ -425,6 +426,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
           continue;
         }
 
+        // 2. Resolver produtos (client_product_id + license_id ou barcode)
         const productIdMap = {};
         if (saleData.items && Array.isArray(saleData.items)) {
           for (const item of saleData.items) {
@@ -473,6 +475,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
           }
         }
 
+        // 3. Inserir venda
         const saleResult = await db.run(
           `INSERT INTO sales (
             user_id, user_name, total_amount, subtotal, tax_amount, discount_amount,
@@ -499,6 +502,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
         );
         const serverSaleId = saleResult.lastID;
 
+        // 4. Inserir itens
         if (saleData.items && Array.isArray(saleData.items)) {
           for (const item of saleData.items) {
             const serverProductId = productIdMap[item.product_id];
@@ -524,6 +528,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
           }
         }
 
+        // 5. Inserir pagamentos
         if (saleData.payments && Array.isArray(saleData.payments)) {
           for (const payment of saleData.payments) {
             await db.run(
@@ -542,6 +547,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
           }
         }
 
+        // 6. Inserir movimentos de stock e ajustar stock
         if (saleData.stock_movements && Array.isArray(saleData.stock_movements)) {
           for (const sm of saleData.stock_movements) {
             const serverProductId = productIdMap[sm.product_id];
@@ -658,6 +664,7 @@ router.get('/dashboard', async (req, res) => {
       customFeatures = [];
     }
 
+    // CORREÇÃO: Permite acesso se for Enterprise OU se tiver remote_dashboard nas funcionalidades personalizadas
     const hasRemoteDashboardFeature = plan === 'enterprise' || customFeatures.includes('remote_dashboard');
     if (!hasRemoteDashboardFeature) {
       return res.status(403).json({
@@ -706,12 +713,12 @@ router.get('/dashboard', async (req, res) => {
       LIMIT 5
     `, [licenseId]);
 
-    // CORRECAO: Excluir servicos dos alertas de stock e usar LEFT JOIN para openSessions
+    // CORREÇÃO: Removida a referencia a coluna "is_service" que não existe no Turso.
+    // O Frontend (Flutter e navegador) já filtra os serviços corretamente.
     const lowStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
       WHERE stock <= min_stock AND stock > 0 AND is_active = 1
-      AND (is_service IS NULL OR is_service = 0)
       AND license_id = ?
       ORDER BY stock ASC
       LIMIT 10
@@ -721,16 +728,15 @@ router.get('/dashboard', async (req, res) => {
       SELECT name, stock, min_stock
       FROM products
       WHERE stock <= 0 AND is_active = 1
-      AND (is_service IS NULL OR is_service = 0)
       AND license_id = ?
       ORDER BY name ASC
       LIMIT 10
     `, [licenseId]);
 
     const openSessions = await db.all(`
-      SELECT cs.*, COALESCE(pu.name, 'Desconhecido') as user_name
+      SELECT cs.*, pu.name as user_name
       FROM cash_sessions cs
-      LEFT JOIN pos_users pu ON cs.user_id = pu.id
+      JOIN pos_users pu ON cs.user_id = pu.id
       WHERE cs.status = 'open'
     `);
 
