@@ -262,14 +262,25 @@ export async function validateLicense(licenseKey, machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
+  // CORREÇÃO: Incluir custom_features na resposta para o Flutter ativar módulos
+  let customFeatures = [];
+  if (dbLicense.custom_features) {
+    try {
+      customFeatures = JSON.parse(dbLicense.custom_features);
+    } catch (e) {
+      customFeatures = [];
+    }
+  }
+
   return {
     valid: true,
-    license: newLicenseKey,         // NOVA key para o Flutter sincronizar
-    licenseKey: newLicenseKey,      // backward compatibility
+    license: newLicenseKey,
+    licenseKey: newLicenseKey,
     plan: dbPlan,
     expiry: dbLicense.expiry,
     daysRemaining: Math.max(0, daysRemaining),
     features: getPlanFeatures(dbPlan),
+    custom_features: customFeatures, // NOVO
     subscriptionId: dbLicense.subscription_id || subscriptionId,
     licenseId: dbLicense.id,
     client: dbLicense.client,
@@ -322,6 +333,16 @@ export async function getLicenseByMachineId(machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
+  // CORREÇÃO: Incluir custom_features na resposta
+  let customFeatures = [];
+  if (dbLicense.custom_features) {
+    try {
+      customFeatures = JSON.parse(dbLicense.custom_features);
+    } catch (e) {
+      customFeatures = [];
+    }
+  }
+
   return {
     license: newLicenseKey,
     licenseKey: newLicenseKey,
@@ -333,6 +354,7 @@ export async function getLicenseByMachineId(machineId) {
     subscriptionId: dbLicense.subscription_id,
     licenseId: dbLicense.id,
     features: getPlanFeatures(dbLicense.plan),
+    custom_features: customFeatures, // NOVO
   };
 }
 
@@ -455,7 +477,7 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
 }
 
 // =========================================================
-// LISTAR LICENCAS (CORRECAO DO ERRO SQL AQUI)
+// LISTAR LICENCAS
 // =========================================================
 export async function listLicenses(filters = {}) {
   const db = await initDB();

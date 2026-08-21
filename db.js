@@ -76,7 +76,7 @@ export async function initDB() {
   };
 
   // =========================================================
-  // SCHEMA CREATION (igual ao db.js antigo, mas para Turso)
+  // SCHEMA CREATION
   // =========================================================
   await db.exec(`
     CREATE TABLE IF NOT EXISTS licenses (
@@ -88,7 +88,8 @@ export async function initDB() {
       expiry TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
-      last_validation TEXT
+      last_validation TEXT,
+      custom_features TEXT
     );
   `);
 
@@ -105,6 +106,13 @@ export async function initDB() {
   if (!hasRemotePin) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN remote_pin TEXT`);
     console.log('[MIGRATION] Adicionada coluna remote_pin a tabela licenses');
+  }
+
+  // Migration: custom_features
+  const hasCustomFeatures = licenseCols.some(col => col.name === 'custom_features');
+  if (!hasCustomFeatures) {
+    await db.exec(`ALTER TABLE licenses ADD COLUMN custom_features TEXT`);
+    console.log('[MIGRATION] Adicionada coluna custom_features a tabela licenses');
   }
 
   await db.exec(`
@@ -417,7 +425,7 @@ export async function initDB() {
   }
 
   // =========================================================
-  // MIGRATION: Criar subscricoes para licencas antigas (COMENTADO PARA EVITAR DUPLICATAS NO FUTURO)
+  // MIGRATION: Criar subscricoes para licencas antigas (COMENTADO)
   // =========================================================
   /* 
   const orphanedLicenses = await db.all(`

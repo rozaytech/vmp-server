@@ -293,6 +293,38 @@ export async function markAsPaid(req, res) {
 }
 
 // =========================================================
+// NOVA FUNÇÃO: Atualizar funcionalidades personalizadas da licença
+// =========================================================
+export async function updateFeatures(req, res) {
+  try {
+    const { id } = req.params;
+    const { features } = req.body; // Array de strings (ex: ["remote_dashboard", "inventory"])
+
+    if (!Array.isArray(features)) {
+      return res.status(400).json({ error: 'invalid_features', message: 'A lista de funcionalidades deve ser um array' });
+    }
+
+    const db = await initDB();
+    const license = await db.get(`SELECT id FROM licenses WHERE id = ?`, [id]);
+    if (!license) {
+      return res.status(404).json({ error: 'not_found', message: 'Licença não encontrada' });
+    }
+
+    // Guardar como string JSON
+    const featuresJson = JSON.stringify(features);
+    await db.run(
+      `UPDATE licenses SET custom_features = ? WHERE id = ?`,
+      [featuresJson, id]
+    );
+
+    return res.json({ success: true, message: 'Funcionalidades atualizadas com sucesso' });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'server_error', details: e.message });
+  }
+}
+
+// =========================================================
 // NOVA FUNÇÃO: Gerar Código de Renovação Offline (HMAC)
 // =========================================================
 export async function generateOfflineCode(req, res) {
