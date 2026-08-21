@@ -15,6 +15,7 @@ import {
   deleteLicense,
   markAsPaid,
   generateOfflineCode, // NOVO: Importação da função
+  updateFeatures,      // NOVO: Importação da função para guardar módulos personalizados
 } from '../controllers/licenseController.js';
 
 const router = express.Router();
@@ -76,5 +77,11 @@ router.post('/pay', markAsPaid);
 // NOVA ROTA: Geração de Código Offline
 // =========================================================
 router.post('/generate-offline-code', generateOfflineCode);
+
+// =========================================================
+// NOVA ROTA: Atualizar funcionalidades personalizadas
+// (Usado pelo botão "Módulos" no Painel Admin)
+// =========================================================
+router.put('/:id/features', updateFeatures);
 
 export default router;
