@@ -21,7 +21,7 @@ function requireAuth(req, res, next) {
     return res.status(401).json({
       success: false,
       error: 'missing_token',
-      message: 'Token de autenticacao nao fornecido',
+      message: 'Token de autenticação não fornecido',
     });
   }
   try {
@@ -32,7 +32,7 @@ function requireAuth(req, res, next) {
     return res.status(401).json({
       success: false,
       error: 'invalid_token',
-      message: 'Token invalido ou expirado',
+      message: 'Token inválido ou expirado',
     });
   }
 }
@@ -48,7 +48,7 @@ router.post('/auth', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_fields',
-        message: 'licenseId e pin sao obrigatorios',
+        message: 'licenseId e pin são obrigatórios',
       });
     }
 
@@ -56,7 +56,7 @@ router.post('/auth', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'invalid_pin_format',
-        message: 'O PIN deve ter entre 4 e 6 digitos numericos',
+        message: 'O PIN deve ter entre 4 e 6 dígitos numéricos',
       });
     }
 
@@ -74,7 +74,7 @@ router.post('/auth', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'license_not_found',
-        message: 'Licenca nao encontrada ou inativa',
+        message: 'Licença não encontrada ou inativa',
       });
     }
 
@@ -84,17 +84,26 @@ router.post('/auth', async (req, res) => {
       return res.status(403).json({
         success: false,
         error: 'license_expired',
-        message: 'Licenca expirada',
+        message: 'Licença expirada',
         expiry: expiry.toISOString(),
       });
     }
 
     const plan = license.sub_plan || license.plan;
-    if (plan !== 'enterprise') {
+    let customFeatures = [];
+    try {
+      customFeatures = license.custom_features ? JSON.parse(license.custom_features) : [];
+    } catch (e) {
+      customFeatures = [];
+    }
+
+    // CORREÇÃO: Permite acesso se for Enterprise OU se tiver remote_dashboard nas funcionalidades personalizadas
+    const hasRemoteDashboardFeature = plan === 'enterprise' || customFeatures.includes('remote_dashboard');
+    if (!hasRemoteDashboardFeature) {
       return res.status(403).json({
         success: false,
         error: 'feature_not_available',
-        message: 'Dashboard remoto disponivel apenas no plano Enterprise',
+        message: 'Dashboard remoto não disponível para este plano',
         requiredPlan: 'enterprise',
       });
     }
@@ -106,7 +115,7 @@ router.post('/auth', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'pin_not_set',
-        message: 'PIN de acesso remoto nao configurado. Configure no aplicativo VMP SaaS.',
+        message: 'PIN de acesso remoto não configurado. Configure no aplicativo VMP SaaS.',
       });
     }
 
@@ -148,7 +157,7 @@ router.post('/auth', async (req, res) => {
       token: token,
       expiresIn: TOKEN_EXPIRY_HOURS * 3600,
       business: {
-        name: license.client || 'Negocio',
+        name: license.client || 'Negócio',
         plan: plan,
         expiry: expiry.toISOString(),
       },
@@ -175,7 +184,7 @@ router.post('/pin/set', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_fields',
-        message: 'licenseId e pin sao obrigatorios',
+        message: 'licenseId e pin são obrigatórios',
       });
     }
 
@@ -183,7 +192,7 @@ router.post('/pin/set', async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'invalid_pin_format',
-        message: 'O PIN deve ter entre 4 e 6 digitos numericos',
+        message: 'O PIN deve ter entre 4 e 6 dígitos numéricos',
       });
     }
 
@@ -210,7 +219,7 @@ router.post('/pin/set', async (req, res) => {
         return res.status(401).json({
           success: false,
           error: 'invalid_current_pin',
-          message: 'PIN actual incorreto',
+          message: 'PIN atual incorreto',
         });
       }
     }
@@ -241,7 +250,7 @@ router.post('/pin/set', async (req, res) => {
 });
 
 // =========================================================
-// POST /api/remote/pin/verify — Verificar se PIN esta configurado
+// POST /api/remote/pin/verify — Verificar se PIN está configurado
 // =========================================================
 router.post('/pin/verify', async (req, res) => {
   try {
@@ -283,7 +292,7 @@ router.post('/pin/verify', async (req, res) => {
 });
 
 // =========================================================
-// POST /api/remote/sync/products — Sync de catalogo do Flutter
+// POST /api/remote/sync/products — Sync de catálogo do Flutter
 // =========================================================
 router.post('/sync/products', requireAuth, async (req, res) => {
   try {
@@ -294,7 +303,7 @@ router.post('/sync/products', requireAuth, async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_products',
-        message: 'Array de produtos obrigatorio',
+        message: 'Array de produtos obrigatório',
       });
     }
 
@@ -395,7 +404,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
       return res.status(400).json({
         success: false,
         error: 'missing_sales',
-        message: 'Array de vendas obrigatorio',
+        message: 'Array de vendas obrigatório',
       });
     }
 
@@ -407,7 +416,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
       const clientSaleId = saleData.id;
 
       try {
-        // 1. Idempotencia: ja existe?
+        // 1. Idempotência: já existe?
         const existing = await db.get(
           `SELECT id FROM sales WHERE client_sale_id = ? AND license_id = ?`,
           [clientSaleId, licenseId]
@@ -602,7 +611,7 @@ router.get('/dashboard', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'missing_token',
-        message: 'Token de autenticacao nao fornecido',
+        message: 'Token de autenticação não fornecido',
       });
     }
 
@@ -615,7 +624,7 @@ router.get('/dashboard', async (req, res) => {
       return res.status(401).json({
         success: false,
         error: 'invalid_token',
-        message: 'Token invalido ou expirado',
+        message: 'Token inválido ou expirado',
       });
     }
 
@@ -648,11 +657,20 @@ router.get('/dashboard', async (req, res) => {
     }
 
     const plan = license.sub_plan || license.plan;
-    if (plan !== 'enterprise') {
+    let customFeatures = [];
+    try {
+      customFeatures = license.custom_features ? JSON.parse(license.custom_features) : [];
+    } catch (e) {
+      customFeatures = [];
+    }
+
+    // CORREÇÃO: Permite acesso se for Enterprise OU se tiver remote_dashboard nas funcionalidades personalizadas
+    const hasRemoteDashboardFeature = plan === 'enterprise' || customFeatures.includes('remote_dashboard');
+    if (!hasRemoteDashboardFeature) {
       return res.status(403).json({
         success: false,
         error: 'feature_not_available',
-        message: 'Dashboard remoto disponivel apenas no plano Enterprise',
+        message: 'Dashboard remoto não disponível para este plano',
       });
     }
 
@@ -695,11 +713,12 @@ router.get('/dashboard', async (req, res) => {
       LIMIT 5
     `, [licenseId]);
 
-    // CORRECAO: stock <= 0 em vez de stock = 0 para pegar negativos tambem
+    // CORREÇÃO: Adicionado filtro para excluir serviços dos alertas de stock
     const lowStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products
       WHERE stock <= min_stock AND stock > 0 AND is_active = 1
+      AND (is_service IS NULL OR is_service = 0)
       AND license_id = ?
       ORDER BY stock ASC
       LIMIT 10
@@ -709,6 +728,7 @@ router.get('/dashboard', async (req, res) => {
       SELECT name, stock, min_stock
       FROM products
       WHERE stock <= 0 AND is_active = 1
+      AND (is_service IS NULL OR is_service = 0)
       AND license_id = ?
       ORDER BY name ASC
       LIMIT 10
@@ -749,7 +769,7 @@ router.get('/dashboard', async (req, res) => {
     res.json({
       success: true,
       business: {
-        name: license.client || license.sub_client || 'Negocio',
+        name: license.client || license.sub_client || 'Negócio',
         plan: plan,
         expiry: expiry.toISOString(),
         daysRemaining: Math.ceil((expiry - now) / (1000 * 60 * 60 * 24)),
@@ -810,7 +830,7 @@ router.post('/logout', async (req, res) => {
       [token]
     );
 
-    res.json({ success: true, message: 'Sessao terminada' });
+    res.json({ success: true, message: 'Sessão terminada' });
 
   } catch (e) {
     console.error('LOGOUT ERROR:', e);
