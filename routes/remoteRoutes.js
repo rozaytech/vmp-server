@@ -729,32 +729,41 @@ router.get('/dashboard', async (req, res) => {
       AND license_id = ?
     `, [licenseId]);
 
+    // CORREÇÃO: Para serviços, a contagem é feita por vendas (COUNT), não por unidades (SUM)
     const topProducts = await db.all(`
-      SELECT p.name, SUM(si.quantity) as qty, SUM(si.total_price) as revenue
+      SELECT 
+        p.name, 
+        p.is_service,
+        SUM(CASE WHEN p.is_service = 1 THEN 1 ELSE si.quantity END) as qty, 
+        SUM(si.total_price) as revenue
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
       WHERE s.status = 'completed' 
       AND s.license_id = ?
       AND date(s.created_at, '${catOffset}') >= date('now', '${catOffset}', '-7 days')
-      GROUP BY si.product_id
+      GROUP BY si.product_id, p.is_service
       ORDER BY qty DESC
       LIMIT 5
     `, [licenseId]);
 
+    // CORREÇÃO: Exclui serviços dos alertas de stock baixo
     const lowStock = await db.all(`
-      SELECT name, stock, min_stock
+      SELECT name, stock, min_stock, is_service
       FROM products
       WHERE stock <= min_stock AND stock > 0 AND is_active = 1
+      AND is_service = 0
       AND license_id = ?
       ORDER BY stock ASC
       LIMIT 10
     `, [licenseId]);
 
+    // CORREÇÃO: Exclui serviços dos alertas de stock esgotado
     const outOfStock = await db.all(`
-      SELECT name, stock, min_stock
+      SELECT name, stock, min_stock, is_service
       FROM products
       WHERE stock <= 0 AND is_active = 1
+      AND is_service = 0
       AND license_id = ?
       ORDER BY name ASC
       LIMIT 10
