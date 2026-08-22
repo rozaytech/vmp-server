@@ -2,6 +2,7 @@ import express from 'express';
 import { initDB } from '../db.js';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { sendDiscordNotification } from '../services/discordNotificationService.js';
 
 const router = express.Router();
 
@@ -151,6 +152,13 @@ router.post('/auth', async (req, res) => {
        WHERE created_at < datetime('now', '-30 days') 
        OR (is_revoked = 1 AND created_at < datetime('now', '-7 days'))`
     );
+
+    // NOTIFICAÇÃO: Login no dashboard remoto
+    await sendDiscordNotification({
+      title: '👁️ Acesso ao Dashboard Remoto',
+      description: `O cliente **${license.client}** acedeu ao Dashboard Remoto com sucesso.`,
+      color: 3447003, // Azul
+    });
 
     res.json({
       success: true,
@@ -576,6 +584,19 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
         }
 
         results.push({ clientSaleId, status: 'synced', serverId: serverSaleId });
+
+        // NOTIFICAÇÃO: Nova venda sincronizada
+        await sendDiscordNotification({
+          title: '🛒 Nova Venda Sincronizada',
+          description: `Venda de **${saleData.total} MZN** registada no servidor.`,
+          color: 3066993, // Verde
+          fields: [
+            { name: 'Cliente', value: saleData.customer_name || 'Consumidor Final', inline: true },
+            { name: 'Operador', value: saleData.user || 'Sistema', inline: true },
+            { name: 'Método', value: saleData.payment_method || 'cash', inline: true }
+          ]
+        });
+
       } catch (itemError) {
         console.error(`SYNC SALE ERROR (clientSaleId=${clientSaleId}):`, itemError);
         errors.push({ clientSaleId, error: itemError.message });
@@ -713,8 +734,6 @@ router.get('/dashboard', async (req, res) => {
       LIMIT 5
     `, [licenseId]);
 
-    // CORREÇÃO: Removida a referencia a coluna "is_service" que não existe no Turso.
-    // O Frontend (Flutter e navegador) já filtra os serviços corretamente.
     const lowStock = await db.all(`
       SELECT name, stock, min_stock
       FROM products

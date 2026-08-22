@@ -13,6 +13,7 @@ import { initDB } from '../db.js';
 import { createSubscription } from '../billing/subscriptionService.js';
 import { PLANS } from '../billing/plans.js';
 import crypto from 'crypto';
+import { sendDiscordNotification } from '../services/discordNotificationService.js';
 
 export async function generate(req, res) {
   try {
@@ -29,6 +30,18 @@ export async function generate(req, res) {
     }
 
     const result = await generateLicense(machineId, client, plan, days);
+
+    // NOTIFICAÇÃO: Nova licença gerada manualmente
+    await sendDiscordNotification({
+      title: '📄 Nova Licença Gerada',
+      description: `Uma nova licença foi criada para **${client}** (Plano: ${plan}).`,
+      color: 3447003, // Azul
+      fields: [
+        { name: 'Machine ID', value: machineId, inline: true },
+        { name: 'Dias', value: days?.toString() || 'Padrão', inline: true }
+      ]
+    });
+
     return res.json(result);
   } catch (e) {
     console.error(e);
@@ -135,6 +148,14 @@ export async function revoke(req, res) {
   try {
     const { id } = req.params;
     const result = await revokeLicense(id);
+
+    // NOTIFICAÇÃO: Licença revogada
+    await sendDiscordNotification({
+      title: '⚠️ Licença Revogada',
+      description: `Licença **${id}** foi revogada pelo administrador.`,
+      color: 15158332, // Vermelho
+    });
+
     return res.json({ success: true, ...result });
   } catch (e) {
     return res.status(500).json({ success: false, error: 'server_error', details: e.message });
@@ -146,6 +167,14 @@ export async function reactivate(req, res) {
     const { id } = req.params;
     const { days, machineId } = req.body;
     const result = await reactivateLicense(id, days, machineId);
+
+    // NOTIFICAÇÃO: Licença reativada
+    await sendDiscordNotification({
+      title: '✅ Licença Reativada',
+      description: `Licença **${id}** foi reativada.${days ? ` Válida por ${days} dias.` : ''}`,
+      color: 3066993, // Verde
+    });
+
     return res.json({ success: true, ...result });
   } catch (e) {
     return res.status(500).json({ success: false, error: 'server_error', details: e.message });
@@ -157,6 +186,18 @@ export async function update(req, res) {
     const { id } = req.params;
     const { plan, status, expiry, client, machineId } = req.body;
     const result = await updateLicense(id, { plan, status, expiry, client, machineId });
+
+    // NOTIFICAÇÃO: Licença atualizada
+    await sendDiscordNotification({
+      title: '✏️ Licença Atualizada',
+      description: `Licença **${id}** foi atualizada pelo administrador.`,
+      color: 3447003, // Azul
+      fields: [
+        { name: 'Plano', value: plan || 'Não alterado', inline: true },
+        { name: 'Estado', value: status || 'Não alterado', inline: true }
+      ]
+    });
+
     return res.json({ success: true, license: result });
   } catch (e) {
     return res.status(500).json({ success: false, error: 'server_error', details: e.message });
@@ -201,6 +242,14 @@ export async function approveRequest(req, res) {
       `UPDATE activation_requests SET status = 'approved', license_id = ? WHERE id = ?`,
       [licenseId, req.params.id]
     );
+
+    // NOTIFICAÇÃO: Pedido aprovado
+    await sendDiscordNotification({
+      title: '✅ Pedido de Ativação Aprovado',
+      description: `O pedido de **${request.client_email}** foi aprovado! Plano: ${request.plan}.`,
+      color: 3066993, // Verde
+    });
+
     return res.json({ success: true, license: result.licenseKey, licenseId: result.licenseId });
   } catch (e) {
     return res.status(500).json({ error: 'server_error', details: e.message });
@@ -219,6 +268,14 @@ export async function rejectRequest(req, res) {
       `UPDATE activation_requests SET status = 'rejected' WHERE id = ?`,
       [req.params.id]
     );
+
+    // NOTIFICAÇÃO: Pedido rejeitado
+    await sendDiscordNotification({
+      title: '❌ Pedido de Ativação Rejeitado',
+      description: `O pedido de **${request.client_email}** foi rejeitado.`,
+      color: 15158332, // Vermelho
+    });
+
     return res.json({ success: true, message: 'Pedido rejeitado' });
   } catch (e) {
     return res.status(500).json({ error: 'server_error', details: e.message });
@@ -234,6 +291,14 @@ export async function deleteLicense(req, res) {
       return res.status(404).json({ error: 'not_found', message: 'Licença não encontrada' });
     }
     await db.run(`DELETE FROM licenses WHERE id = ?`, [id]);
+
+    // NOTIFICAÇÃO: Licença apagada
+    await sendDiscordNotification({
+      title: '🗑️ Licença Apagada',
+      description: `A licença **${id}** foi apagada permanentemente.`,
+      color: 15158332, // Vermelho
+    });
+
     return res.json({ success: true, message: 'Licença apagada com sucesso' });
   } catch (e) {
     console.error(e);
@@ -280,6 +345,18 @@ export async function markAsPaid(req, res) {
       [paymentId, subscription.id, license.client, amount, 'MZN', 'completed', 'manual', `MANUAL-${Date.now()}`, now]
     );
 
+    // NOTIFICAÇÃO: Pagamento confirmado
+    await sendDiscordNotification({
+      title: '💰 Pagamento Confirmado',
+      description: `A licença de **${license.client}** foi paga e convertida em subscrição!`,
+      color: 3066993, // Verde
+      fields: [
+        { name: 'Plano', value: license.plan, inline: true },
+        { name: 'Valor', value: `${amount} MZN`, inline: true },
+        { name: 'Expiração', value: new Date(subscription.expiry).toLocaleDateString('pt-PT'), inline: true }
+      ]
+    });
+
     return res.json({
       success: true,
       message: 'Licença paga e convertida em subscrição com sucesso',
@@ -316,6 +393,16 @@ export async function updateFeatures(req, res) {
       `UPDATE licenses SET custom_features = ? WHERE id = ?`,
       [featuresJson, id]
     );
+
+    // NOTIFICAÇÃO: Funcionalidades atualizadas
+    await sendDiscordNotification({
+      title: '🧩 Funcionalidades Personalizadas Atualizadas',
+      description: `As funcionalidades da licença **${id}** foram atualizadas.`,
+      color: 3447003, // Azul
+      fields: [
+        { name: 'Funcionalidades Ativas', value: features.join(', ') || 'Nenhuma (Padrão do plano)', inline: false }
+      ]
+    });
 
     return res.json({ success: true, message: 'Funcionalidades atualizadas com sucesso' });
   } catch (e) {
@@ -356,6 +443,16 @@ export async function generateOfflineCode(req, res) {
     
     // Formato do código: MACHINE_ID-DATA_EXPIRACAO-HASH
     const code = `${machineId}-${expiryStr}-${signature}`;
+
+    // NOTIFICAÇÃO: Código offline gerado
+    await sendDiscordNotification({
+      title: '🔑 Código de Renovação Offline Gerado',
+      description: `Um código offline foi gerado para **${license.client}**.`,
+      color: 16776960, // Amarelo
+      fields: [
+        { name: 'Código', value: code, inline: false }
+      ]
+    });
 
     return res.json({ success: true, code });
   } catch (e) {

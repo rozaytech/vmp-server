@@ -1,4 +1,5 @@
 import { initDB } from "../db.js";
+import { sendDiscordNotification } from "../services/discordNotificationService.js";
 
 export async function getLicenses(req, res) {
   try {
@@ -31,6 +32,12 @@ export async function revokeLicense(req, res) {
 
     const db = await initDB();
 
+    // Buscar informações da licença antes de revogar
+    const license = await db.get(
+      `SELECT client, plan FROM licenses WHERE id = ?`,
+      [id]
+    );
+
     await db.run(
       `
       UPDATE licenses
@@ -39,6 +46,15 @@ export async function revokeLicense(req, res) {
       `,
       [id]
     );
+
+    // NOTIFICAÇÃO: Licença revogada
+    if (license) {
+      await sendDiscordNotification({
+        title: '⚠️ Licença Revogada',
+        description: `A licença do cliente **${license.client}** (Plano: ${license.plan}) foi revogada manualmente.`,
+        color: 15158332, // Vermelho
+      });
+    }
 
     return res.json({
       success: true,
