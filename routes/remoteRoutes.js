@@ -599,7 +599,7 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
           description: `Venda de **${saleData.total} MZN** registada no servidor.`,
           color: 3066993,
           fields: [
-            { name: 'Estabelecimento', value: req.license.client, inline: true },
+            { name: 'Licença de:', value: req.license.client, inline: true },
             { name: 'Cliente', value: saleData.customer_name || 'Consumidor Final', inline: true },
             { name: 'Operador', value: saleData.user || 'Sistema', inline: true },
             { name: 'Método', value: saleData.payment_method || 'cash', inline: true }
