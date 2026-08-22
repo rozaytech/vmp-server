@@ -9,6 +9,10 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'VMP_REMOTE_DASHBOARD_SECRET_2026';
 const TOKEN_EXPIRY_HOURS = 24;
 
+// NOVO: Variáveis para controlar o spam de notificações do catálogo
+let lastCatalogNotificationAt = 0;
+const CATALOG_NOTIFICATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
+
 function hashPin(pin) {
   return crypto.createHash('sha256').update(pin + 'VMP_PIN_SALT_2026').digest('hex');
 }
@@ -379,8 +383,12 @@ router.post('/sync/products', requireAuth, async (req, res) => {
       }
     }
 
-    // CORREÇÃO: Removido o await para não bloquear a resposta da API
-    if (results.length > 0) {
+    // NOVO: Controlo de spam no Discord. Só notifica se passaram 6 horas desde a última
+    const currentTime = Date.now();
+    if (results.length > 0 && (currentTime - lastCatalogNotificationAt > CATALOG_NOTIFICATION_INTERVAL_MS)) {
+      lastCatalogNotificationAt = currentTime;
+      
+      // CORREÇÃO: Removido o await para não bloquear a resposta da API
       sendDiscordNotification({
         title: '📦 Catálogo Sincronizado',
         description: `O catálogo do cliente **${req.license.client}** foi atualizado (${results.length} produtos).`,
@@ -585,11 +593,13 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
         results.push({ clientSaleId, status: 'synced', serverId: serverSaleId });
 
         // CORREÇÃO: Removido o await para não bloquear a resposta da API
+        // MELHORIA: Título e campos incluem o email do estabelecimento (req.license.client)
         sendDiscordNotification({
-          title: '🛒 Nova Venda Sincronizada',
+          title: `🛒 Nova Venda Sincronizada - ${req.license.client}`,
           description: `Venda de **${saleData.total} MZN** registada no servidor.`,
           color: 3066993,
           fields: [
+            { name: 'Estabelecimento', value: req.license.client, inline: true },
             { name: 'Cliente', value: saleData.customer_name || 'Consumidor Final', inline: true },
             { name: 'Operador', value: saleData.user || 'Sistema', inline: true },
             { name: 'Método', value: saleData.payment_method || 'cash', inline: true }
