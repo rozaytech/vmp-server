@@ -2,7 +2,8 @@ import { Resend } from 'resend';
 import { initDB } from '../db.js';
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'VMP SaaS <onboarding@resend.dev>';
+// CORRECAO: Remetente profissional atualizado
+const FROM_EMAIL = process.env.FROM_EMAIL || 'VMP SaaS <contacto@vmpsaas.com>';
 
 let resend = null;
 if (RESEND_API_KEY && !RESEND_API_KEY.includes('demo') && RESEND_API_KEY.startsWith('re_')) {
@@ -131,7 +132,7 @@ ${licenseKey}
 
 💬 SUPORTE:
 • WhatsApp: 846166104
-• Email: freelancer.adamgy@gmail.com
+• Email: contacto@vmpsaas.com
 
 Obrigado por escolher VMP SaaS!
 Equipa VMP`,
@@ -166,7 +167,7 @@ Equipa VMP`,
           <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #eee;">
             <p style="margin: 0 0 8px; font-weight: bold;">💬 Suporte:</p>
             <p style="margin: 4px 0;">• WhatsApp: <a href="https://wa.me/258846166104" style="color: #25d366;">846166104</a></p>
-            <p style="margin: 4px 0;">• Email: <a href="mailto:freelancer.adamgy@gmail.com" style="color: #1976d2;">freelancer.adamgy@gmail.com</a></p>
+            <p style="margin: 4px 0;">• Email: <a href="mailto:contacto@vmpsaas.com" style="color: #1976d2;">contacto@vmpsaas.com</a></p>
           </div>
           
           <p style="margin-top: 24px; color: #666; font-size: 13px;">Obrigado por escolher VMP SaaS!<br>Equipa VMP</p>
@@ -196,7 +197,7 @@ Aproveite para testar todas as funcionalidades do VMP.
 
 💬 SUPORTE:
 • WhatsApp: 846166104
-• Email: freelancer.adamgy@gmail.com
+• Email: contacto@vmpsaas.com
 
 Obrigado,
 Equipa VMP SaaS`,
@@ -236,7 +237,7 @@ ${instructions.iban ? `• IBAN: ${instructions.iban}` : ''}
 1. Efetue o pagamento com os dados acima
 2. Envie o comprovativo por:
    • WhatsApp: 846166104
-   • Email: freelancer.adamgy@gmail.com
+   • Email: contacto@vmpsaas.com
 3. A sua licença será ativada em até 24h
 
 ⏳ Prazo: O pagamento deve ser efetuado em até 48h.
@@ -264,7 +265,7 @@ Assim que aprovado, receberá a licença por email.
 
 💬 DÚVIDAS?
 • WhatsApp: 846166104
-• Email: freelancer.adamgy@gmail.com
+• Email: contacto@vmpsaas.com
 
 Obrigado pela paciência,
 Equipa VMP SaaS`,
