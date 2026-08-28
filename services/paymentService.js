@@ -27,7 +27,7 @@ const PAYMENT_CONFIG = {
     nib: '000800002558873010113',
     iban: 'MZ59000800002558873010113',
     holder: 'Adamgy Adamo / VMP SaaS',
-    emailConfirm: 'freelancer.adamgy@gmail.com',
+    emailConfirm: 'contacto@vmpsaas.com',
     whatsappConfirm: '846166104',
   },
 };
@@ -50,7 +50,7 @@ export async function initiatePayment(type, amount, client, plan) {
       '1. Efetue o pagamento com os dados acima',
       '2. Envie o comprovativo por:',
       `   • WhatsApp: ${config.whatsappConfirm || '846166104'}`,
-      `   • Email: ${config.emailConfirm || 'freelancer.adamgy@gmail.com'}`,
+      `   • Email: ${config.emailConfirm || 'contacto@vmpsaas.com'}`,
       '3. A sua licença será ativada em até 24h após confirmação',
     ],
   };
@@ -77,7 +77,7 @@ export async function verifyPayment(reference) {
     reference,
     status: 'pending_confirmation',
     message: 'Pagamento registado. Aguarda confirmação manual do administrador.',
-    note: 'Envie o comprovativo por WhatsApp 846166104 ou email freelancer.adamgy@gmail.com',
+    note: 'Envie o comprovativo por WhatsApp 846166104 ou email contacto@vmpsaas.com',
     verifiedAt: new Date().toISOString(),
   };
 }
