@@ -9,9 +9,19 @@ const router = express.Router();
 
 // Função para permitir Admin e Super Admin com mensagem clara
 function requireAdminOrSuper(req, res, next) {
-  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  
+  // =========================================================
+  // CORREÇÃO ADICIONADA: Normaliza a role para aceitar 'admin', 'superadmin', 'Super Admin', etc.
+  // =========================================================
+  const role = (req.user.role || '').toLowerCase().replace(/[\s_-]/g, '');
+  
+  if (role !== 'admin' && role !== 'superadmin') {
     return res.status(403).json({ error: 'forbidden', message: 'Acesso negado. Apenas Administradores ou Super Admins podem gerir utilizadores.' });
   }
+  // =========================================================
   next();
 }
 

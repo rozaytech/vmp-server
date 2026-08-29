@@ -33,15 +33,28 @@ export async function login(req, res) {
     await db.run(`UPDATE admins SET password = ? WHERE id = ?`, [bcrypt.hashSync(password, 10), user.id]);
   }
 
+  // =========================================================
+  // CORREÇÃO ADICIONADA: Garante que o admin principal tenha a role correta no token
+  // =========================================================
+  let tokenRole = user.role;
+  if (user.username === 'admin') {
+    tokenRole = 'superadmin'; 
+    // Se o banco ainda tiver outra role, atualiza-o para superadmin
+    if (user.role !== 'superadmin') {
+      await db.run(`UPDATE admins SET role = 'superadmin' WHERE id = ?`, [user.id]);
+    }
+  }
+  // =========================================================
+
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, username: user.username, role: tokenRole },
     SECRET,
     { expiresIn: "8h" }
   );
 
   return res.json({ 
     token, 
-    role: user.role, 
+    role: tokenRole, 
     username: user.username, 
     name: user.name || user.username 
   });
