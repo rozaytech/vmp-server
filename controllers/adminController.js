@@ -75,7 +75,8 @@ export async function revokeLicense(req, res) {
 export async function listUsers(req, res) {
   try {
     const db = await initDB();
-    const users = await db.all(`SELECT id, username, email, name, role, created_at FROM admins ORDER BY created_at DESC`);
+    // Seleciona todas as colunas para evitar erros de coluna em falta
+    const users = await db.all(`SELECT * FROM admins ORDER BY created_at DESC`);
     return res.json({ users });
   } catch (e) {
     console.error("LIST USERS ERROR:", e);
@@ -103,7 +104,7 @@ export async function createUser(req, res) {
     return res.json({ success: true });
   } catch (e) {
     console.error("CREATE USER ERROR:", e);
-    return res.status(500).json({ error: "server_error" });
+    return res.status(500).json({ error: "server_error", details: e.message });
   }
 }
 

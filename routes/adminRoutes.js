@@ -3,15 +3,14 @@ import { initDB } from '../db.js';
 import { generateLicense } from '../services/licenseService.js';
 import { sendEmail, licenseApprovedTemplate } from '../services/emailService_sendgrid.js';
 import { authMiddleware } from "../middleware/authMiddleware.js";
-import { requireRole } from "../middleware/jwtMiddleware.js";
 import { listUsers, createUser, deleteUser } from '../controllers/adminController.js';
 
 const router = express.Router();
 
-// Middleware para permitir Admin e Super Admin
+// Função para permitir Admin e Super Admin com mensagem clara
 function requireAdminOrSuper(req, res, next) {
   if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
-    return res.status(403).json({ error: 'forbidden' });
+    return res.status(403).json({ error: 'forbidden', message: 'Acesso negado. Apenas Administradores ou Super Admins podem gerir utilizadores.' });
   }
   next();
 }
