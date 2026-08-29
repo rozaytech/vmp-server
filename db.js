@@ -152,9 +152,22 @@ export async function initDB() {
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'admin',
+      name TEXT,
+      email TEXT,
       created_at TEXT NOT NULL
     );
   `);
+
+  // Migration: name e email na tabela admins
+  const adminCols = await db.all(`PRAGMA table_info(admins)`);
+  if (!adminCols.some(col => col.name === 'name')) {
+    await db.exec(`ALTER TABLE admins ADD COLUMN name TEXT`);
+    console.log('[MIGRATION] Adicionada coluna name a tabela admins');
+  }
+  if (!adminCols.some(col => col.name === 'email')) {
+    await db.exec(`ALTER TABLE admins ADD COLUMN email TEXT`);
+    console.log('[MIGRATION] Adicionada coluna email a tabela admins');
+  }
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS license_logs (
@@ -424,54 +437,17 @@ export async function initDB() {
     console.log('[SEED] POS User admin criado (PIN: 1234)');
   }
 
-  // =========================================================
-  // MIGRATION: Criar subscricoes para licencas antigas (COMENTADO)
-  // =========================================================
-  /* 
-  const orphanedLicenses = await db.all(`
-    SELECT l.* FROM licenses l
-    LEFT JOIN subscriptions s ON l.subscription_id = s.id
-    WHERE l.subscription_id IS NULL OR s.id IS NULL
-  `);
-
-  for (const lic of orphanedLicenses) {
-    const subId = uuidv4();
-    const now = new Date();
-
-    await db.run(
-      `INSERT INTO subscriptions (
-        id, client, plan, status, start_date, expiry_date,
-        payment_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        subId,
-        lic.client,
-        lic.plan,
-        'active',
-        lic.created_at,
-        lic.expiry,
-        'paid',
-        now.toISOString(),
-      ]
-    );
-
-    await db.run(
-      `UPDATE licenses SET subscription_id = ? WHERE id = ?`,
-      [subId, lic.id]
-    );
-
-    console.log(`[MIGRATION] Criada subscricao ${subId} para licenca antiga ${lic.id} (${lic.client})`);
-  }
-  */
-
-  // Admin do painel
+  // Admin do painel (atualizado para role "superadmin" e adicionado name/email)
   const admin = await db.get(`SELECT * FROM admins WHERE username = 'admin'`);
   if (!admin) {
     await db.run(
-      `INSERT INTO admins (username, password, role, created_at) VALUES (?, ?, ?, ?)`,
-      ['admin', 'admin123', 'super_admin', new Date().toISOString()]
+      `INSERT INTO admins (username, password, role, name, email, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ['admin', 'admin123', 'superadmin', 'Administrador', 'admin@vmp.com', new Date().toISOString()]
     );
     console.log('[SEED] Admin do painel criado (username: admin, password: admin123)');
+  } else if (admin.role === 'admin') {
+    // Atualiza roles antigas para bater com o padrão do frontend
+    await db.run(`UPDATE admins SET role = 'superadmin' WHERE id = ?`, [admin.id]);
   }
 
   // =========================================================

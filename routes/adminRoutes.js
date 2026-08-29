@@ -2,6 +2,9 @@ import express from 'express';
 import { initDB } from '../db.js';
 import { generateLicense } from '../services/licenseService.js';
 import { sendEmail, licenseApprovedTemplate } from '../services/emailService_sendgrid.js';
+import { authMiddleware } from "../middleware/authMiddleware.js";
+import { requireRole } from "../middleware/jwtMiddleware.js";
+import { listUsers, createUser, deleteUser } from '../controllers/adminController.js';
 
 const router = express.Router();
 
@@ -265,5 +268,12 @@ router.get('/email-logs', async (req, res) => {
     return res.status(500).json({ error: 'server_error' });
   }
 });
+
+// =========================================================
+// GESTÃO DE UTILIZADORES (PROTEGIDO: APENAS SUPER ADMIN)
+// =========================================================
+router.get("/users", authMiddleware, requireRole('superadmin'), listUsers);
+router.post("/users/create", authMiddleware, requireRole('superadmin'), createUser);
+router.delete("/users/:id", authMiddleware, requireRole('superadmin'), deleteUser);
 
 export default router;
