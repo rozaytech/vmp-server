@@ -4,10 +4,16 @@ import { initDB } from "../db.js";
 
 const SECRET = "VMP_JWT_SECRET_2026";
 
+// Helper para verificar password (suporta passwords antigas em texto simples)
+function verifyPassword(inputPassword, storedPassword) {
+  if (storedPassword.startsWith('$2')) {
+    return bcrypt.compareSync(inputPassword, storedPassword);
+  }
+  return inputPassword === storedPassword; // Fallback para texto simples
+}
+
 export async function login(req, res) {
   const { email, password, username } = req.body;
-
-  // Aceita tanto email quanto username para login
   const identifier = username || email;
 
   const db = await initDB();
@@ -17,17 +23,18 @@ export async function login(req, res) {
     return res.status(401).json({ error: "invalid_credentials" });
   }
 
-  const valid = bcrypt.compareSync(password, user.password);
+  const valid = verifyPassword(password, user.password);
   if (!valid) {
     return res.status(401).json({ error: "invalid_credentials" });
   }
 
+  // Migrar password para hash bcrypt se ainda estiver em texto simples
+  if (!user.password.startsWith('$2')) {
+    await db.run(`UPDATE admins SET password = ? WHERE id = ?`, [bcrypt.hashSync(password, 10), user.id]);
+  }
+
   const token = jwt.sign(
-    {
-      id: user.id,
-      username: user.username,
-      role: user.role
-    },
+    { id: user.id, username: user.username, role: user.role },
     SECRET,
     { expiresIn: "8h" }
   );
@@ -63,7 +70,7 @@ export async function updateProfile(req, res) {
     if (username) {
       const existing = await db.get(`SELECT id FROM admins WHERE username = ? AND id != ?`, [username, req.user.id]);
       if (existing) {
-        return res.status(409).json({ error: "username_taken" });
+        return res.status(409).json({ message: "Nome de utilizador já existe." });
       }
     }
 
@@ -75,7 +82,7 @@ export async function updateProfile(req, res) {
     return res.json({ success: true });
   } catch (e) {
     console.error("UPDATE PROFILE ERROR:", e);
-    return res.status(500).json({ error: "server_error" });
+    return res.status(500).json({ message: "Erro ao atualizar perfil." });
   }
 }
 
@@ -87,9 +94,9 @@ export async function changePassword(req, res) {
 
     if (!user) return res.status(404).json({ error: "not_found" });
 
-    const valid = bcrypt.compareSync(currentPassword, user.password);
+    const valid = verifyPassword(currentPassword, user.password);
     if (!valid) {
-      return res.status(401).json({ error: "invalid_current_password" });
+      return res.status(401).json({ message: "Password atual incorreta." });
     }
 
     const hashed = bcrypt.hashSync(newPassword, 10);
@@ -98,6 +105,6 @@ export async function changePassword(req, res) {
     return res.json({ success: true });
   } catch (e) {
     console.error("CHANGE PASSWORD ERROR:", e);
-    return res.status(500).json({ error: "server_error" });
+    return res.status(500).json({ message: "Erro ao alterar password." });
   }
 }
