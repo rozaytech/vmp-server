@@ -154,11 +154,12 @@ export async function initDB() {
       role TEXT NOT NULL DEFAULT 'admin',
       name TEXT,
       email TEXT,
+      phone TEXT,
       created_at TEXT NOT NULL
     );
   `);
 
-  // Migration: name e email na tabela admins
+  // Migration: name, email e phone na tabela admins
   const adminCols = await db.all(`PRAGMA table_info(admins)`);
   if (!adminCols.some(col => col.name === 'name')) {
     await db.exec(`ALTER TABLE admins ADD COLUMN name TEXT`);
@@ -167,6 +168,11 @@ export async function initDB() {
   if (!adminCols.some(col => col.name === 'email')) {
     await db.exec(`ALTER TABLE admins ADD COLUMN email TEXT`);
     console.log('[MIGRATION] Adicionada coluna email a tabela admins');
+  }
+  // NOVO: Adicionada coluna phone
+  if (!adminCols.some(col => col.name === 'phone')) {
+    await db.exec(`ALTER TABLE admins ADD COLUMN phone TEXT`);
+    console.log('[MIGRATION] Adicionada coluna phone a tabela admins');
   }
 
   await db.exec(`

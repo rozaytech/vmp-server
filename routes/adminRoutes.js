@@ -8,6 +8,14 @@ import { listUsers, createUser, deleteUser } from '../controllers/adminControlle
 
 const router = express.Router();
 
+// Middleware para permitir Admin e Super Admin
+function requireAdminOrSuper(req, res, next) {
+  if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  next();
+}
+
 router.use((req, res, next) => {
   next();
 });
@@ -270,10 +278,10 @@ router.get('/email-logs', async (req, res) => {
 });
 
 // =========================================================
-// GESTÃO DE UTILIZADORES (PROTEGIDO: APENAS SUPER ADMIN)
+// GESTÃO DE UTILIZADORES (PROTEGIDO: ADMIN E SUPER ADMIN)
 // =========================================================
-router.get("/users", authMiddleware, requireRole('superadmin'), listUsers);
-router.post("/users/create", authMiddleware, requireRole('superadmin'), createUser);
-router.delete("/users/:id", authMiddleware, requireRole('superadmin'), deleteUser);
+router.get("/users", authMiddleware, requireAdminOrSuper, listUsers);
+router.post("/users/create", authMiddleware, requireAdminOrSuper, createUser);
+router.delete("/users/:id", authMiddleware, requireAdminOrSuper, deleteUser);
 
 export default router;
