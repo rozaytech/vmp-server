@@ -20,41 +20,20 @@ router.use((req, res, next) => {
 });
 
 // =========================================================
-// DASHBOARD STATS (CORRIGIDO: Estatísticas exatas)
+// DASHBOARD STATS
 // =========================================================
 router.get('/stats', async (req, res) => {
   try {
     const db = await initDB();
-
-    // Licenças totais e ativas
     const totalLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses`);
     const activeLicenses = await db.get(`SELECT COUNT(*) as count FROM licenses WHERE status = 'active'`);
-    
-    // Subscrições: Conta APENAS as pagas OU trials ativos (ignora as revogadas/expiradas/inativas)
     const totalSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE payment_status = 'paid' OR status = 'trial'`);
     const activeSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active' AND payment_status = 'paid'`);
     const trialSubscriptions = await db.get(`SELECT COUNT(*) as count FROM subscriptions WHERE status = 'trial'`);
-    
     const pendingRequests = await db.get(`SELECT COUNT(*) as count FROM activation_requests WHERE status = 'pending'`);
-    
-    // Soma apenas pagamentos completos
     const totalRevenue = await db.get(`SELECT SUM(amount) as total FROM payments WHERE status = 'completed'`);
-
-    const recentRequests = await db.all(`
-      SELECT * FROM activation_requests
-      ORDER BY created_at DESC
-      LIMIT 5
-    `);
-
-    // Lista recente apenas com subscrições pagas ou trial (sem apagadas)
-    const recentSubscriptions = await db.all(`
-      SELECT s.*, l.machine_id
-      FROM subscriptions s
-      LEFT JOIN licenses l ON l.subscription_id = s.id
-      WHERE s.payment_status = 'paid' OR s.status = 'trial'
-      ORDER BY s.created_at DESC
-      LIMIT 5
-    `);
+    const recentRequests = await db.all(`SELECT * FROM activation_requests ORDER BY created_at DESC LIMIT 5`);
+    const recentSubscriptions = await db.all(`SELECT s.*, l.machine_id FROM subscriptions s LEFT JOIN licenses l ON l.subscription_id = s.id WHERE s.payment_status = 'paid' OR s.status = 'trial' ORDER BY s.created_at DESC LIMIT 5`);
 
     return res.json({
       stats: {
@@ -69,7 +48,6 @@ router.get('/stats', async (req, res) => {
       recentRequests,
       recentSubscriptions,
     });
-
   } catch (e) {
     console.error('ADMIN STATS ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
@@ -83,77 +61,35 @@ router.get('/activation-requests', async (req, res) => {
   try {
     const db = await initDB();
     const status = req.query.status;
-
     let query = `SELECT * FROM activation_requests`;
     let params = [];
-
     if (status && status !== 'all') {
       query += ` WHERE status = ?`;
       params.push(status);
     }
-
     query += ` ORDER BY created_at DESC`;
-
     const rows = await db.all(query, params);
-
     return res.json({ requests: rows });
-
   } catch (e) {
     console.error('ACTIVATION REQUESTS ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
   }
 });
 
-// =========================================================
-// APPROVE REQUEST
-// =========================================================
 router.post('/activation-requests/:id/approve', async (req, res) => {
   try {
     const db = await initDB();
-    const request = await db.get(
-      `SELECT * FROM activation_requests WHERE id = ?`,
-      [req.params.id]
-    );
+    const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
+    if (!request) return res.status(404).json({ error: 'not_found' });
+    if (request.status !== 'pending') return res.status(400).json({ error: 'already_processed', message: 'Este pedido já foi processado' });
 
-    if (!request) {
-      return res.status(404).json({ error: 'not_found' });
-    }
-
-    if (request.status !== 'pending') {
-      return res.status(400).json({
-        error: 'already_processed',
-        message: 'Este pedido já foi processado',
-      });
-    }
-
-    const result = await generateLicense(
-      request.machine_id,
-      request.client_email,
-      request.plan,
-      365,
-      false
-    );
-
-    if (!result || !result.licenseKey) {
-      return res.status(500).json({
-        error: 'license_generation_failed',
-        message: 'Falha ao gerar licenca',
-      });
-    }
+    const result = await generateLicense(request.machine_id, request.client_email, request.plan, 365, false);
+    if (!result || !result.licenseKey) return res.status(500).json({ error: 'license_generation_failed', message: 'Falha ao gerar licenca' });
 
     const licenseId = result.licenseId;
+    await db.run(`UPDATE activation_requests SET status = 'approved', license_id = ? WHERE id = ?`, [licenseId, req.params.id]);
 
-    await db.run(
-      `UPDATE activation_requests SET status = 'approved', license_id = ? WHERE id = ?`,
-      [licenseId, req.params.id]
-    );
-
-    const template = licenseApprovedTemplate(
-      request.client_email,
-      result.licenseKey,
-      request.plan,
-      result.expiry
-    );
+    const template = licenseApprovedTemplate(request.client_email, result.licenseKey, request.plan, result.expiry);
     await sendEmail({ to: request.client_email, ...template });
 
     return res.json({
@@ -163,41 +99,20 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
       subscription: result.subscription,
       message: 'Licença aprovada e enviada por email',
     });
-
   } catch (e) {
     console.error('APPROVE ERROR:', e);
     return res.status(500).json({ error: 'server_error', details: e.message });
   }
 });
 
-// =========================================================
-// REJECT REQUEST
-// =========================================================
 router.post('/activation-requests/:id/reject', async (req, res) => {
   try {
     const db = await initDB();
-    const request = await db.get(
-      `SELECT * FROM activation_requests WHERE id = ?`,
-      [req.params.id]
-    );
-
-    if (!request) {
-      return res.status(404).json({ error: 'not_found' });
-    }
-
-    await db.run(
-      `UPDATE activation_requests SET status = 'rejected' WHERE id = ?`,
-      [req.params.id]
-    );
-
-    await sendEmail({
-      to: request.client_email,
-      subject: 'VMP SaaS - Pedido Rejeitado',
-      body: `Olá,\n\nLamentamos informar que o seu pedido de ativação foi rejeitado.\n\nSe acredita que se trata de um erro, contacte o nosso suporte.\n\nObrigado,\nEquipa VMP SaaS`,
-    });
-
+    const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
+    if (!request) return res.status(404).json({ error: 'not_found' });
+    await db.run(`UPDATE activation_requests SET status = 'rejected' WHERE id = ?`, [req.params.id]);
+    await sendEmail({ to: request.client_email, subject: 'VMP SaaS - Pedido Rejeitado', body: `Olá,\n\nLamentamos informar que o seu pedido de ativação foi rejeitado.\n\nSe acredita que se trata de um erro, contacte o nosso suporte.\n\nObrigado,\nEquipa VMP SaaS` });
     return res.json({ success: true, message: 'Pedido rejeitado' });
-
   } catch (e) {
     console.error('REJECT ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
@@ -205,32 +120,21 @@ router.post('/activation-requests/:id/reject', async (req, res) => {
 });
 
 // =========================================================
-// ALL SUBSCRIPTIONS (CORRECAO: Mostra apenas as ativas pagas ou trials)
+// ALL SUBSCRIPTIONS
 // =========================================================
 router.get('/subscriptions', async (req, res) => {
   try {
     const db = await initDB();
     const status = req.query.status;
-
-    let query = `
-      SELECT s.*, l.machine_id, l.id as license_id
-      FROM subscriptions s
-      LEFT JOIN licenses l ON l.subscription_id = s.id
-      WHERE (s.payment_status = 'paid' OR s.status = 'trial')
-    `;
+    let query = `SELECT s.*, l.machine_id, l.id as license_id FROM subscriptions s LEFT JOIN licenses l ON l.subscription_id = s.id WHERE (s.payment_status = 'paid' OR s.status = 'trial')`;
     let params = [];
-
     if (status && status !== 'all') {
       query += ` AND s.status = ?`;
       params.push(status);
     }
-
     query += ` ORDER BY s.created_at DESC`;
-
     const rows = await db.all(query, params);
-
     return res.json({ subscriptions: rows });
-
   } catch (e) {
     console.error('SUBSCRIPTIONS ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
@@ -238,20 +142,13 @@ router.get('/subscriptions', async (req, res) => {
 });
 
 // =========================================================
-// ALL LICENSES (Lista completa)
+// ALL LICENSES
 // =========================================================
 router.get('/licenses', async (req, res) => {
   try {
     const db = await initDB();
-    const rows = await db.all(`
-      SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
-      FROM licenses l
-      LEFT JOIN subscriptions s ON s.id = l.subscription_id
-      ORDER BY l.created_at DESC
-    `);
-
+    const rows = await db.all(`SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry FROM licenses l LEFT JOIN subscriptions s ON s.id = l.subscription_id ORDER BY l.created_at DESC`);
     return res.json({ licenses: rows });
-
   } catch (e) {
     console.error('LICENSES ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
@@ -264,12 +161,8 @@ router.get('/licenses', async (req, res) => {
 router.get('/email-logs', async (req, res) => {
   try {
     const db = await initDB();
-    const rows = await db.all(`
-      SELECT * FROM email_logs ORDER BY created_at DESC LIMIT 50
-    `);
-
+    const rows = await db.all(`SELECT * FROM email_logs ORDER BY created_at DESC LIMIT 50`);
     return res.json({ emails: rows });
-
   } catch (e) {
     console.error('EMAIL LOGS ERROR:', e);
     return res.status(500).json({ error: 'server_error' });
