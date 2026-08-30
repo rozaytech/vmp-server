@@ -86,7 +86,10 @@ router.get('/activation-requests', async (req, res) => {
   }
 });
 
-router.post('/activation-requests/:id/approve', async (req, res) => {
+// =========================================================
+// CORREÇÃO: Adicionado requireAdminOrSuper para impedir viewers
+// =========================================================
+router.post('/activation-requests/:id/approve', requireAdminOrSuper, async (req, res) => {
   try {
     const db = await initDB();
     const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
@@ -115,7 +118,7 @@ router.post('/activation-requests/:id/approve', async (req, res) => {
   }
 });
 
-router.post('/activation-requests/:id/reject', async (req, res) => {
+router.post('/activation-requests/:id/reject', requireAdminOrSuper, async (req, res) => {
   try {
     const db = await initDB();
     const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
