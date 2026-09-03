@@ -2,9 +2,9 @@ export const PLANS = {
   basic: {
     code: "basic",
     name: "Basic",
-    price: 1500, // MZN
+    price: 3500, // MZN (Atualizado de 1500)
     days: 30,
-    maxUsers: 2,
+    maxUsers: 10, // Atualizado de 2
     maxProducts: 500,
     features: [
       "pos",
@@ -19,9 +19,9 @@ export const PLANS = {
   pro: {
     code: "pro",
     name: "Pro",
-    price: 3500, // MZN
+    price: 7000, // MZN (Atualizado de 3500)
     days: 30,
-    maxUsers: 5,
+    maxUsers: 30, // Atualizado de 5
     maxProducts: 5000,
     features: [
       "pos",
@@ -40,8 +40,8 @@ export const PLANS = {
   enterprise: {
     code: "enterprise",
     name: "Enterprise",
-    price: 8500, // MZN
-    days: 365,
+    price: 12500, // MZN (Atualizado de 8500)
+    days: 30, // Atualizado de 365
     maxUsers: 999,
     maxProducts: 99999,
     features: [
