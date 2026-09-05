@@ -88,8 +88,9 @@ router.get('/activation-requests', async (req, res) => {
 
 // =========================================================
 // CORREÇÃO: Adicionado requireAdminOrSuper para impedir viewers
+// ADIÇÃO IMPORTANTE: Adicionado authMiddleware para validar o token!
 // =========================================================
-router.post('/activation-requests/:id/approve', requireAdminOrSuper, async (req, res) => {
+router.post('/activation-requests/:id/approve', authMiddleware, requireAdminOrSuper, async (req, res) => {
   try {
     const db = await initDB();
     const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
@@ -118,7 +119,7 @@ router.post('/activation-requests/:id/approve', requireAdminOrSuper, async (req,
   }
 });
 
-router.post('/activation-requests/:id/reject', requireAdminOrSuper, async (req, res) => {
+router.post('/activation-requests/:id/reject', authMiddleware, requireAdminOrSuper, async (req, res) => {
   try {
     const db = await initDB();
     const request = await db.get(`SELECT * FROM activation_requests WHERE id = ?`, [req.params.id]);
