@@ -231,6 +231,17 @@ export async function initDB() {
   `);
 
   // =========================================================
+  // MIGRAÇÃO ADICIONADA: Coluna error_message na tabela email_logs
+  // =========================================================
+  const emailLogsCols = await db.all(`PRAGMA table_info(email_logs)`);
+  const hasErrorMessage = emailLogsCols.some(col => col.name === 'error_message');
+  if (!hasErrorMessage) {
+    await db.exec(`ALTER TABLE email_logs ADD COLUMN error_message TEXT`);
+    console.log('[MIGRATION] Adicionada coluna error_message a tabela email_logs');
+  }
+  // =========================================================
+
+  // =========================================================
   // TABELAS POS / VMP SAAS
   // =========================================================
   await db.exec(`
