@@ -12,6 +12,7 @@ export const PLANS = {
       "cash_register",
       "basic_reports",
       "z_report",
+      "users", // ADIÇÃO: Gestão de Utilizadores
     ],
     description: "Ideal para pequenos negocios e bancas",
   },
@@ -33,6 +34,7 @@ export const PLANS = {
       "customers",
       "multi_warehouse",
       "analytics",
+      "users", // ADIÇÃO: Gestão de Utilizadores
     ],
     description: "Para lojas em crescimento",
   },
@@ -59,6 +61,7 @@ export const PLANS = {
       "remote_dashboard",
       "priority_support",
       "api_access",
+      "users", // ADIÇÃO: Gestão de Utilizadores
     ],
     description: "Para cadeias e grandes estabelecimentos",
   },
