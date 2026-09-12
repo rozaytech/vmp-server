@@ -402,7 +402,7 @@ export async function initDB() {
   `);
 
   // =========================================================
-  // MIGRATIONS: Sync support (v2.3.3)
+  // MIGRATIONS: Sync support (v2.4.1)
   // =========================================================
   const salesColumns = await db.all(`PRAGMA table_info(sales)`);
   if (!salesColumns.some(c => c.name === 'user_name')) {

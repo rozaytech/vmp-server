@@ -230,7 +230,7 @@ router.post('/payment/verify', async (req, res) => {
 // =========================================================
 router.get('/version', (req, res) => {
   res.json({
-    version: '2.3.2',
+    version: '2.4.1',
     downloadUrl: 'https://vmp-landing.vercel.app/download',
     releaseNotes: 'Correcoes de bugs, feature flags, painel remoto, transferencia de licencas',
     forceUpdate: false,
