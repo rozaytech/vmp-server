@@ -2,9 +2,9 @@ export const PLANS = {
   basic: {
     code: "basic",
     name: "Basic",
-    price: 3500, // MZN (Atualizado de 1500)
+    price: 1350, // MZN (Reduzido drasticamente para captar mercado)
     days: 30,
-    maxUsers: 10, // Atualizado de 2
+    maxUsers: 10,
     maxProducts: 500,
     features: [
       "pos",
@@ -12,7 +12,7 @@ export const PLANS = {
       "cash_register",
       "basic_reports",
       "z_report",
-      "users", // ADIÇÃO: Gestão de Utilizadores
+      "users",
     ],
     description: "Ideal para pequenos negocios e bancas",
   },
@@ -20,9 +20,9 @@ export const PLANS = {
   pro: {
     code: "pro",
     name: "Pro",
-    price: 7000, // MZN (Atualizado de 3500)
+    price: 2700, // MZN
     days: 30,
-    maxUsers: 30, // Atualizado de 5
+    maxUsers: 30,
     maxProducts: 5000,
     features: [
       "pos",
@@ -34,7 +34,7 @@ export const PLANS = {
       "customers",
       "multi_warehouse",
       "analytics",
-      "users", // ADIÇÃO: Gestão de Utilizadores
+      "users",
     ],
     description: "Para lojas em crescimento",
   },
@@ -42,8 +42,8 @@ export const PLANS = {
   enterprise: {
     code: "enterprise",
     name: "Enterprise",
-    price: 12500, // MZN (Atualizado de 8500)
-    days: 30, // Atualizado de 365
+    price: 4900, // MZN
+    days: 30,
     maxUsers: 999,
     maxProducts: 99999,
     features: [
@@ -61,7 +61,7 @@ export const PLANS = {
       "remote_dashboard",
       "priority_support",
       "api_access",
-      "users", // ADIÇÃO: Gestão de Utilizadores
+      "users",
     ],
     description: "Para cadeias e grandes estabelecimentos",
   },
