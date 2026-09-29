@@ -40,7 +40,7 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   res.json({
     status: 'VMP SaaS Control Plane Online',
-    version: '2.3.8',
+    version: '2.4.1',
     mode: 'enterprise-saas',
     services: {
       auth: true,
@@ -63,7 +63,7 @@ app.get('/health', (req, res) => {
     service: 'vmp-license-server',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    version: '2.3.8',
+    version: '2.4.1',
   });
 });
 
@@ -203,8 +203,8 @@ app.get('/api/public/plans', (req, res) => {
 // =========================================================
 app.get('/api/public/version', (req, res) => {
   res.json({
-    version: '2.3.8',
-    downloadUrl: 'https://vmp-landing.vercel.app/download',
+    version: '2.4.1',
+    downloadUrl: 'https://github.com/rozaytech/vmp/releases/download/v2.4.1/VMP-2.4.1-setup.exe',
     releaseNotes: 'Correcao critica de licenciamento com revalidacao online, base de dados persistente Turso, melhorias de seguranca e estabilidade',
     forceUpdate: false,
   });
@@ -224,7 +224,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`VMP SaaS Control Plane v2.3.8 running on port ${PORT}`);
+  console.log(`VMP SaaS Control Plane v2.4.1 running on port ${PORT}`);
   console.log(`API endpoints:`);
   console.log(`  - Auth:           /api/auth`);
   console.log(`  - Licenses:       /api/licenses`);
@@ -262,6 +262,7 @@ app.listen(PORT, () => {
           id TEXT PRIMARY KEY,
           machine_id TEXT NOT NULL,
           client_email TEXT NOT NULL,
+          client_name TEXT,
           plan TEXT NOT NULL,
           type TEXT DEFAULT 'remote',
           status TEXT DEFAULT 'pending',

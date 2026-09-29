@@ -34,7 +34,7 @@ export function getPlanDurationDays(plan, isTrial = false) {
 // =========================================================
 // EXPORTADO: criar entrada de licenca
 // =========================================================
-export async function createLicenseEntry({ machineId, client, plan, expiry, subscriptionId, isTrial = false }) {
+export async function createLicenseEntry({ machineId, client, clientName, plan, expiry, subscriptionId, isTrial = false }) {
   const db = await initDB();
   const licenseId = uuidv4();
   const licenseKey = generateLicenseKey(machineId, plan, expiry, subscriptionId);
@@ -42,9 +42,9 @@ export async function createLicenseEntry({ machineId, client, plan, expiry, subs
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [licenseId, machineId, client, plan, subscriptionId, expiry, "active", now, null]
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [licenseId, machineId, client, clientName || null, plan, subscriptionId, expiry, "active", now, null]
   );
 
   await db.run(
@@ -58,7 +58,7 @@ export async function createLicenseEntry({ machineId, client, plan, expiry, subs
 // =========================================================
 // GERAR LICENCA COMPLETA (subscricao + licenca)
 // =========================================================
-export async function generateLicense(machineId, client, plan, customDays, isTrial = false) {
+export async function generateLicense(machineId, client, plan, customDays, isTrial = false, clientName = null) {
   const db = await initDB();
 
   if (!machineId || !client || !plan) {
@@ -118,12 +118,13 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       licenseId,
       machineId,
       client,
+      clientName || null,
       plan,
       subscriptionId,
       expiry.toISOString(),
@@ -145,11 +146,13 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
     plan,
     expiry: expiry.toISOString(),
     days,
+    clientName: clientName || null,
     features: getPlanFeatures(plan),
     subscription: {
       id: subscriptionId,
       client,
       email: email || client,
+      clientName: clientName || null,
       plan,
       status: isTrial ? 'trial' : 'active',
       startDate: now.toISOString(),
@@ -262,7 +265,7 @@ export async function validateLicense(licenseKey, machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
-  // CORREÇÃO: Incluir custom_features na resposta para o Flutter ativar módulos
+  // Incluir custom_features na resposta para o Flutter ativar módulos
   let customFeatures = [];
   if (dbLicense.custom_features) {
     try {
@@ -280,16 +283,17 @@ export async function validateLicense(licenseKey, machineId) {
     expiry: dbLicense.expiry,
     daysRemaining: Math.max(0, daysRemaining),
     features: getPlanFeatures(dbPlan),
-    custom_features: customFeatures, // NOVO
+    custom_features: customFeatures,
     subscriptionId: dbLicense.subscription_id || subscriptionId,
     licenseId: dbLicense.id,
     client: dbLicense.client,
+    clientName: dbLicense.client_name || null,
     paymentStatus: dbLicense.sub_status || "unknown",
   };
 }
 
 // =========================================================
-// NOVO: Buscar licenca ativa por machine_id
+// Buscar licenca ativa por machine_id
 // =========================================================
 export async function getLicenseByMachineId(machineId) {
   const db = await initDB();
@@ -320,6 +324,7 @@ export async function getLicenseByMachineId(machineId) {
       plan: dbLicense.plan,
       expiry: dbLicense.expiry,
       daysRemaining: 0,
+      clientName: dbLicense.client_name || null,
     };
   }
 
@@ -333,7 +338,7 @@ export async function getLicenseByMachineId(machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
-  // CORREÇÃO: Incluir custom_features na resposta
+  // Incluir custom_features na resposta
   let customFeatures = [];
   if (dbLicense.custom_features) {
     try {
@@ -351,15 +356,16 @@ export async function getLicenseByMachineId(machineId) {
     expiry: dbLicense.expiry,
     daysRemaining: Math.max(0, daysRemaining),
     client: dbLicense.client,
+    clientName: dbLicense.client_name || null,
     subscriptionId: dbLicense.subscription_id,
     licenseId: dbLicense.id,
     features: getPlanFeatures(dbLicense.plan),
-    custom_features: customFeatures, // NOVO
+    custom_features: customFeatures,
   };
 }
 
 // =========================================================
-// NOVO: Buscar status da licenca por machine_id
+// Buscar status da licenca por machine_id
 // =========================================================
 export async function getLicenseStatusByMachineId(machineId) {
   const db = await initDB();
@@ -389,6 +395,7 @@ export async function getLicenseStatusByMachineId(machineId) {
     expiry: dbLicense.expiry,
     daysRemaining: Math.max(0, daysRemaining),
     client: dbLicense.client,
+    clientName: dbLicense.client_name || null,
     subscriptionId: dbLicense.subscription_id,
     licenseId: dbLicense.id,
   };
@@ -440,12 +447,13 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       newLicenseId,
       newMachineId,
       oldLicense.client,
+      oldLicense.client_name || null,
       oldLicense.plan,
       oldLicense.subscription_id,
       newExpiry.toISOString(),
@@ -473,6 +481,7 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
     daysTransferred: daysRemaining,
     newExpiry: newExpiry.toISOString(),
     plan: oldLicense.plan,
+    clientName: oldLicense.client_name || null,
   };
 }
 
@@ -494,7 +503,8 @@ export async function listLicenses(filters = {}) {
     args.push(filters.plan);
   }
   if (filters.client) {
-    whereClause += " AND l.client LIKE ?";
+    whereClause += " AND (l.client LIKE ? OR l.client_name LIKE ?)";
+    args.push(`%${filters.client}%`);
     args.push(`%${filters.client}%`);
   }
 
@@ -588,13 +598,14 @@ export async function reactivateLicense(licenseId, newDays = null, newMachineId 
     newExpiry: expiry.toISOString(),
     days,
     machineId,
+    clientName: license.client_name || null,
   };
 }
 
 // =========================================================
 // EDITAR LICENCA
 // =========================================================
-export async function updateLicense(licenseId, { plan, expiry, status, client, machineId }) {
+export async function updateLicense(licenseId, { plan, expiry, status, client, clientName, machineId }) {
   const db = await initDB();
 
   const license = await db.get(`SELECT * FROM licenses WHERE id = ?`, [licenseId]);
@@ -609,6 +620,7 @@ export async function updateLicense(licenseId, { plan, expiry, status, client, m
   if (expiry !== undefined) { updates.push("expiry = ?"); values.push(expiry); }
   if (status !== undefined) { updates.push("status = ?"); values.push(status); }
   if (client !== undefined) { updates.push("client = ?"); values.push(client); }
+  if (clientName !== undefined) { updates.push("client_name = ?"); values.push(clientName); }
   if (machineId !== undefined) { updates.push("machine_id = ?"); values.push(machineId); }
 
   if (updates.length === 0) {

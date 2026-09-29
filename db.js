@@ -83,6 +83,7 @@ export async function initDB() {
       id TEXT PRIMARY KEY,
       machine_id TEXT NOT NULL,
       client TEXT NOT NULL,
+      client_name TEXT,
       plan TEXT NOT NULL,
       subscription_id TEXT,
       expiry TEXT NOT NULL,
@@ -114,6 +115,16 @@ export async function initDB() {
     await db.exec(`ALTER TABLE licenses ADD COLUMN custom_features TEXT`);
     console.log('[MIGRATION] Adicionada coluna custom_features a tabela licenses');
   }
+
+  // =========================================================
+  // MIGRATION v31: Coluna client_name na tabela licenses
+  // =========================================================
+  const hasClientName = licenseCols.some(col => col.name === 'client_name');
+  if (!hasClientName) {
+    await db.exec(`ALTER TABLE licenses ADD COLUMN client_name TEXT`);
+    console.log('[MIGRATION v31] Adicionada coluna client_name a tabela licenses');
+  }
+  // =========================================================
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -169,7 +180,6 @@ export async function initDB() {
     await db.exec(`ALTER TABLE admins ADD COLUMN email TEXT`);
     console.log('[MIGRATION] Adicionada coluna email a tabela admins');
   }
-  // NOVO: Adicionada coluna phone
   if (!adminCols.some(col => col.name === 'phone')) {
     await db.exec(`ALTER TABLE admins ADD COLUMN phone TEXT`);
     console.log('[MIGRATION] Adicionada coluna phone a tabela admins');
@@ -210,6 +220,7 @@ export async function initDB() {
       id TEXT PRIMARY KEY,
       machine_id TEXT NOT NULL,
       client_email TEXT NOT NULL,
+      client_name TEXT,
       plan TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       license_id TEXT,
@@ -217,6 +228,17 @@ export async function initDB() {
       created_at TEXT NOT NULL
     );
   `);
+
+  // =========================================================
+  // MIGRATION v31: Coluna client_name na tabela activation_requests
+  // =========================================================
+  const activationCols = await db.all(`PRAGMA table_info(activation_requests)`);
+  const hasActivationClientName = activationCols.some(col => col.name === 'client_name');
+  if (!hasActivationClientName) {
+    await db.exec(`ALTER TABLE activation_requests ADD COLUMN client_name TEXT`);
+    console.log('[MIGRATION v31] Adicionada coluna client_name a tabela activation_requests');
+  }
+  // =========================================================
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS email_logs (

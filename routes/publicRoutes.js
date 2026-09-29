@@ -13,7 +13,7 @@ const router = express.Router();
 // =========================================================
 router.post('/trial/start', async (req, res) => {
   try {
-    const { machineId, email, plan } = req.body;
+    const { machineId, email, plan, clientName } = req.body;
 
     if (!machineId || !email || !plan) {
       return res.status(400).json({
@@ -22,9 +22,9 @@ router.post('/trial/start', async (req, res) => {
       });
     }
 
-    const result = await generateLicense(machineId, email, plan, 7, true);
+    const result = await generateLicense(machineId, email, plan, 7, true, clientName);
 
-    const template = trialStartedTemplate(email, 7, result.subscription.endDate);
+    const template = trialStartedTemplate(email, 7, result.subscription.endDate, clientName);
     await sendEmail({ to: email, ...template });
 
     return res.json({
@@ -34,6 +34,7 @@ router.post('/trial/start', async (req, res) => {
       subscription: result.subscription,
       endDate: result.subscription.endDate,
       expiry: result.subscription.endDate,
+      clientName: clientName || null,
       message: 'Trial de 7 dias iniciado com sucesso',
     });
 
@@ -98,7 +99,7 @@ router.get('/trial/status/:machineId', async (req, res) => {
 // =========================================================
 router.post('/license/request', async (req, res) => {
   try {
-    const { machineId, email, plan } = req.body;
+    const { machineId, email, plan, clientName } = req.body;
 
     if (!machineId || !email || !plan) {
       return res.status(400).json({
@@ -128,15 +129,15 @@ router.post('/license/request', async (req, res) => {
 
     await db.run(
       `INSERT INTO activation_requests (
-        id, machine_id, client_email, plan, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [requestId, machineId, email, plan, 'pending', now]
+        id, machine_id, client_email, client_name, plan, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [requestId, machineId, email, clientName || null, plan, 'pending', now]
     );
 
     await sendEmail({
       to: email,
       subject: 'VMP SaaS - Pedido Recebido',
-      body: `Ola,\n\nRecebemos o seu pedido de ativacao para o plano ${plan}.\n\nO seu pedido esta em analise. Assim que aprovado, recebera a sua licenca por email.\n\nMachine ID: ${machineId}\nPedido: ${requestId}\n\nObrigado,\nEquipa VMP SaaS`,
+      body: `Ola${clientName ? ' ' + clientName : ''},\n\nRecebemos o seu pedido de ativacao para o plano ${plan}.\n\nO seu pedido esta em analise. Assim que aprovado, recebera a sua licenca por email.\n\nMachine ID: ${machineId}\nPedido: ${requestId}\n\nObrigado,\nEquipa VMP SaaS`,
     });
 
     return res.json({
@@ -184,7 +185,7 @@ router.get('/license/request/:requestId', async (req, res) => {
 // =========================================================
 router.post('/payment/initiate', async (req, res) => {
   try {
-    const { type, amount, client, plan } = req.body;
+    const { type, amount, client, plan, clientName } = req.body;
 
     if (!type || !amount || !client || !plan) {
       return res.status(400).json({ error: 'missing_fields' });
@@ -193,7 +194,7 @@ router.post('/payment/initiate', async (req, res) => {
     const result = await initiatePayment(type, amount, client, plan);
 
     const template = paymentInstructionsTemplate(
-      client, type, result.reference, amount, result.instructions.message
+      client, type, result.reference, amount, result.instructions.message, clientName
     );
     await sendEmail({ to: client, ...template });
 
@@ -231,7 +232,7 @@ router.post('/payment/verify', async (req, res) => {
 router.get('/version', (req, res) => {
   res.json({
     version: '2.4.1',
-    downloadUrl: 'https://vmp-landing.vercel.app/download',
+    downloadUrl: 'https://github.com/rozaytech/vmp/releases/download/v2.4.1/VMP-2.4.1-setup.exe',
     releaseNotes: 'Correcoes de bugs, feature flags, painel remoto, transferencia de licencas',
     forceUpdate: false,
     minimumVersion: '2.0.0',

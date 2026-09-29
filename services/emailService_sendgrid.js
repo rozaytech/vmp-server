@@ -2,7 +2,6 @@ import sgMail from '@sendgrid/mail';
 import { initDB } from '../db.js';
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-// CORRECAO: Remetente profissional atualizado
 const FROM_EMAIL = process.env.FROM_EMAIL || 'contacto@vmpsaas.com';
 
 if (SENDGRID_API_KEY && !SENDGRID_API_KEY.includes('demo')) {
@@ -83,16 +82,18 @@ async function logEmail(to, subject, body, status, errorMessage = null, messageI
 }
 
 // =========================================================
-// TEMPLATES (iguais ao Resend, reutilizáveis)
+// TEMPLATES
 // =========================================================
-export function licenseApprovedTemplate(clientEmail, licenseKey, plan, expiryDate) {
+export function licenseApprovedTemplate(clientEmail, licenseKey, plan, expiryDate, clientName = null) {
+  const greeting = clientName ? `Olá ${clientName},` : 'Olá,';
   return {
     subject: '✅ VMP SaaS — Licença Aprovada',
-    body: `Olá,
+    body: `${greeting}
 
 A sua licença VMP foi aprovada com sucesso!
 
 📋 DETALHES:
+• Cliente / Empresa: ${clientName || clientEmail}
 • Plano: ${plan}
 • Validade: ${new Date(expiryDate).toLocaleDateString('pt-PT')}
 • Email: ${clientEmail}
@@ -115,9 +116,10 @@ Equipa VMP`,
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f8f9fa;">
         <div style="background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
           <h2 style="color: #2e7d32; margin-top: 0;">✅ Licença VMP Aprovada</h2>
-          <p>Olá,</p>
+          <p>${greeting}</p>
           <p>A sua licença foi aprovada com sucesso!</p>
           <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <p style="margin: 8px 0;"><strong>Cliente / Empresa:</strong> ${clientName || clientEmail}</p>
             <p style="margin: 8px 0;"><strong>Plano:</strong> ${plan}</p>
             <p style="margin: 8px 0;"><strong>Validade:</strong> ${new Date(expiryDate).toLocaleDateString('pt-PT')}</p>
             <p style="margin: 8px 0;"><strong>Email:</strong> ${clientEmail}</p>
@@ -146,14 +148,16 @@ Equipa VMP`,
   };
 }
 
-export function trialStartedTemplate(clientEmail, days, expiryDate) {
+export function trialStartedTemplate(clientEmail, days, expiryDate, clientName = null) {
+  const greeting = clientName ? `Olá ${clientName},` : 'Olá,';
   return {
     subject: '🎉 VMP SaaS — Trial Iniciado',
-    body: `Olá,
+    body: `${greeting}
 
 O seu trial de ${days} dias foi iniciado com sucesso!
 
 📋 DETALHES:
+• Cliente / Empresa: ${clientName || clientEmail}
 • Validade: ${new Date(expiryDate).toLocaleDateString('pt-PT')}
 • Email: ${clientEmail}
 
@@ -173,7 +177,7 @@ Equipa VMP SaaS`,
   };
 }
 
-export function paymentInstructionsTemplate(clientEmail, method, reference, amount, instructions) {
+export function paymentInstructionsTemplate(clientEmail, method, reference, amount, instructions, clientName = null) {
   const methodNames = {
     emola: 'eMola',
     mpesa: 'M-Pesa',
@@ -181,17 +185,19 @@ export function paymentInstructionsTemplate(clientEmail, method, reference, amou
     transfer: 'Transferência Bancária',
   };
 
+  const greeting = clientName ? `Olá ${clientName},` : 'Olá,';
+
   return {
     subject: `💳 VMP SaaS — Instruções de Pagamento (${methodNames[method] || method})`,
-    body: `Olá,
+    body: `${greeting}
 
 Recebemos o seu pedido de ativação. Para concluir, efetue o pagamento:
 
 📋 DETALHES DO PAGAMENTO:
+• Cliente / Empresa: ${clientName || clientEmail}
 • Método: ${methodNames[method] || method}
 • Valor: ${amount.toFixed(2)} MZN
 • Referência: ${reference}
-• Cliente: ${clientEmail}
 
 ${instructions.message}
 
@@ -216,14 +222,16 @@ Equipa VMP SaaS`,
   };
 }
 
-export function requestReceivedTemplate(clientEmail, machineId, plan, requestId) {
+export function requestReceivedTemplate(clientEmail, machineId, plan, requestId, clientName = null) {
+  const greeting = clientName ? `Olá ${clientName},` : 'Olá,';
   return {
     subject: '📥 VMP SaaS — Pedido Recebido',
-    body: `Olá,
+    body: `${greeting}
 
 Recebemos o seu pedido de ativação para o plano ${plan}.
 
 📋 DETALHES:
+• Cliente / Empresa: ${clientName || clientEmail}
 • Email: ${clientEmail}
 • Machine ID: ${machineId}
 • Plano: ${plan}
