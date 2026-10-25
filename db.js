@@ -116,15 +116,12 @@ export async function initDB() {
     console.log('[MIGRATION] Adicionada coluna custom_features a tabela licenses');
   }
 
-  // =========================================================
-  // MIGRATION v31: Coluna client_name na tabela licenses
-  // =========================================================
+  // Migration: client_name
   const hasClientName = licenseCols.some(col => col.name === 'client_name');
   if (!hasClientName) {
     await db.exec(`ALTER TABLE licenses ADD COLUMN client_name TEXT`);
     console.log('[MIGRATION v31] Adicionada coluna client_name a tabela licenses');
   }
-  // =========================================================
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -229,16 +226,13 @@ export async function initDB() {
     );
   `);
 
-  // =========================================================
-  // MIGRATION v31: Coluna client_name na tabela activation_requests
-  // =========================================================
+  // Migration: client_name na activation_requests
   const activationCols = await db.all(`PRAGMA table_info(activation_requests)`);
   const hasActivationClientName = activationCols.some(col => col.name === 'client_name');
   if (!hasActivationClientName) {
     await db.exec(`ALTER TABLE activation_requests ADD COLUMN client_name TEXT`);
     console.log('[MIGRATION v31] Adicionada coluna client_name a tabela activation_requests');
   }
-  // =========================================================
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS email_logs (
@@ -252,16 +246,13 @@ export async function initDB() {
     );
   `);
 
-  // =========================================================
-  // MIGRAÇÃO ADICIONADA: Coluna error_message na tabela email_logs
-  // =========================================================
+  // Migration: error_message na email_logs
   const emailLogsCols = await db.all(`PRAGMA table_info(email_logs)`);
   const hasErrorMessage = emailLogsCols.some(col => col.name === 'error_message');
   if (!hasErrorMessage) {
     await db.exec(`ALTER TABLE email_logs ADD COLUMN error_message TEXT`);
     console.log('[MIGRATION] Adicionada coluna error_message a tabela email_logs');
   }
-  // =========================================================
 
   // =========================================================
   // TABELAS POS / VMP SAAS
@@ -362,6 +353,7 @@ export async function initDB() {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS stock_movements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT UNIQUE,
       product_id INTEGER NOT NULL,
       type TEXT NOT NULL,
       quantity INTEGER NOT NULL,
@@ -369,10 +361,30 @@ export async function initDB() {
       reason TEXT,
       sale_id INTEGER,
       warehouse_id INTEGER,
+      terminal_id TEXT,
+      license_id TEXT,
       created_by INTEGER,
       created_at TEXT NOT NULL
     );
   `);
+
+  // =========================================================
+  // MIGRATION v32: Colunas para Multicaixa na tabela stock_movements
+  // =========================================================
+  const stockCols = await db.all(`PRAGMA table_info(stock_movements)`);
+  if (!stockCols.some(col => col.name === 'uuid')) {
+    await db.exec(`ALTER TABLE stock_movements ADD COLUMN uuid TEXT`);
+    await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_uuid ON stock_movements(uuid)`);
+    console.log('[MIGRATION v32] Adicionada coluna uuid a stock_movements');
+  }
+  if (!stockCols.some(col => col.name === 'terminal_id')) {
+    await db.exec(`ALTER TABLE stock_movements ADD COLUMN terminal_id TEXT`);
+    console.log('[MIGRATION v32] Adicionada coluna terminal_id a stock_movements');
+  }
+  if (!stockCols.some(col => col.name === 'license_id')) {
+    await db.exec(`ALTER TABLE stock_movements ADD COLUMN license_id TEXT`);
+    console.log('[MIGRATION v32] Adicionada coluna license_id a stock_movements');
+  }
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS cash_sessions (
@@ -476,7 +488,7 @@ export async function initDB() {
     console.log('[SEED] POS User admin criado (PIN: 1234)');
   }
 
-  // Admin do painel (atualizado para role "superadmin" e adicionado name/email)
+  // Admin do painel
   const admin = await db.get(`SELECT * FROM admins WHERE username = 'admin'`);
   if (!admin) {
     await db.run(
@@ -485,7 +497,6 @@ export async function initDB() {
     );
     console.log('[SEED] Admin do painel criado (username: admin, password: admin123)');
   } else if (admin.role === 'admin') {
-    // Atualiza roles antigas para bater com o padrão do frontend
     await db.run(`UPDATE admins SET role = 'superadmin' WHERE id = ?`, [admin.id]);
   }
 

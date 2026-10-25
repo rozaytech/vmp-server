@@ -9,7 +9,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'VMP_REMOTE_DASHBOARD_SECRET_2026';
 const TOKEN_EXPIRY_HOURS = 24;
 
-// NOVO: Variáveis para controlar o spam de notificações do catálogo
+// Variáveis para controlar o spam de notificações do catálogo
 let lastCatalogNotificationAt = 0;
 const CATALOG_NOTIFICATION_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
 
@@ -153,7 +153,6 @@ router.post('/auth', async (req, res) => {
        OR (is_revoked = 1 AND created_at < datetime('now', '-7 days'))`
     );
 
-    // CORREÇÃO: Removido o await para não bloquear a resposta da API
     sendDiscordNotification({
       title: '👁️ Acesso ao Dashboard Remoto',
       description: `O cliente **${license.client}** acedeu ao Dashboard Remoto com sucesso.`,
@@ -383,12 +382,11 @@ router.post('/sync/products', requireAuth, async (req, res) => {
       }
     }
 
-    // NOVO: Controlo de spam no Discord. Só notifica se passaram 6 horas desde a última
+    // Controlo de spam no Discord. Só notifica se passaram 6 horas desde a última
     const currentTime = Date.now();
     if (results.length > 0 && (currentTime - lastCatalogNotificationAt > CATALOG_NOTIFICATION_INTERVAL_MS)) {
       lastCatalogNotificationAt = currentTime;
       
-      // CORREÇÃO: Removido o await para não bloquear a resposta da API
       sendDiscordNotification({
         title: '📦 Catálogo Sincronizado',
         description: `O catálogo do cliente **${req.license.client}** foi atualizado (${results.length} produtos).`,
@@ -592,8 +590,6 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
 
         results.push({ clientSaleId, status: 'synced', serverId: serverSaleId });
 
-        // CORREÇÃO: Removido o await para não bloquear a resposta da API
-        // MELHORIA: Título e campos incluem o email do estabelecimento (req.license.client)
         sendDiscordNotification({
           title: `🛒 Nova Venda Sincronizada - ${req.license.client}`,
           description: `Venda de **${saleData.total} MZN** registada no servidor.`,
@@ -623,6 +619,120 @@ router.post('/sync/sales', requireAuth, async (req, res) => {
 
   } catch (e) {
     console.error('SYNC SALES ERROR:', e);
+    res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: e.message,
+    });
+  }
+});
+
+// =========================================================
+// POST /api/remote/sync/stock — Receber movimentos de stock do Flutter (MULTICAIXA)
+// =========================================================
+router.post('/sync/stock', requireAuth, async (req, res) => {
+  try {
+    const { movements } = req.body;
+    const licenseId = req.license.licenseId;
+
+    if (!Array.isArray(movements) || movements.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_movements',
+        message: 'Array de movimentos obrigatório',
+      });
+    }
+
+    const db = await initDB();
+    let inserted = 0;
+    const now = new Date().toISOString();
+
+    for (const m of movements) {
+      try {
+        // Verificar se este movimento já existe (pelo UUID)
+        const existing = await db.get(
+          `SELECT id FROM stock_movements WHERE uuid = ?`,
+          [m.uuid]
+        );
+
+        if (!existing) {
+          await db.run(
+            `INSERT INTO stock_movements (
+              uuid, product_id, type, quantity, reason, terminal_id, license_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              m.uuid,
+              m.product_id,
+              m.type || 'sale',
+              m.quantity || 0,
+              m.reason || `Sync ${m.terminal_id || 'VMP'}`,
+              m.terminal_id || 'Caixa Desconhecido',
+              licenseId,
+              m.date || now,
+            ]
+          );
+          
+          // Atualiza o stock global na tabela de produtos da cloud
+          await db.run(
+            `UPDATE products SET stock = stock + ? WHERE id = ? AND license_id = ?`,
+            [m.quantity || 0, m.product_id, licenseId]
+          );
+
+          inserted++;
+        }
+      } catch (err) {
+        console.error(`ERRO NO MOVIMENTO UUID ${m.uuid}:`, err);
+      }
+    }
+
+    res.json({
+      success: true,
+      received: movements.length,
+      inserted,
+    });
+
+  } catch (e) {
+    console.error('SYNC STOCK (POST) ERROR:', e);
+    res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: e.message,
+    });
+  }
+});
+
+// =========================================================
+// GET /api/remote/sync/stock — Enviar movimentos de stock para o Flutter (MULTICAIXA)
+// =========================================================
+router.get('/sync/stock', requireAuth, async (req, res) => {
+  try {
+    const { since } = req.query;
+    const licenseId = req.license.licenseId;
+    const db = await initDB();
+
+    let query = `
+      SELECT uuid, product_id, type, quantity, reason, terminal_id, created_at as date, license_id
+      FROM stock_movements
+      WHERE license_id = ?
+    `;
+    const params = [licenseId];
+
+    if (since) {
+      query += ` AND created_at > ?`;
+      params.push(since);
+    }
+
+    query += ` ORDER BY created_at ASC LIMIT 500`;
+
+    const movements = await db.all(query, params);
+
+    res.json({
+      success: true,
+      movements: movements || [],
+    });
+
+  } catch (e) {
+    console.error('SYNC STOCK (GET) ERROR:', e);
     res.status(500).json({
       success: false,
       error: 'server_error',
