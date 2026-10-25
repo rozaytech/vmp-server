@@ -42,9 +42,9 @@ export async function createLicenseEntry({ machineId, client, clientName, plan, 
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [licenseId, machineId, client, clientName || null, plan, subscriptionId, expiry, "active", now, null]
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation, max_terminals
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [licenseId, machineId, client, clientName || null, plan, subscriptionId, expiry, "active", now, null, 1]
   );
 
   await db.run(
@@ -118,8 +118,8 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation, max_terminals
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       licenseId,
       machineId,
@@ -131,6 +131,7 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
       "active",
       now.toISOString(),
       null,
+      1
     ]
   );
 
@@ -165,7 +166,7 @@ export async function generateLicense(machineId, client, plan, customDays, isTri
 }
 
 // =========================================================
-// VALIDAR LICENCA
+// VALIDAR LICENCA (Com suporte a Multicaixa)
 // =========================================================
 export async function validateLicense(licenseKey, machineId) {
   const db = await initDB();
@@ -193,10 +194,6 @@ export async function validateLicense(licenseKey, machineId) {
     return { valid: false, error: "invalid_signature" };
   }
 
-  if (licMachineId !== machineId) {
-    return { valid: false, error: "machine_mismatch" };
-  }
-
   // --- PASSO 2: Consultar a DB por subscription_id ---
   let dbLicense = await db.get(
     `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
@@ -219,9 +216,25 @@ export async function validateLicense(licenseKey, machineId) {
     );
   }
 
-  // --- PASSO 4: Se nao encontrou na DB, verificar payload ---
+  // Se não encontrou na DB principal, procura na tabela de terminais secundários
   if (!dbLicense) {
-    // Verificar se o payload local ainda e valido
+    const terminal = await db.get(
+      `SELECT license_id FROM license_terminals WHERE machine_id = ?`,
+      [machineId]
+    );
+    if (terminal) {
+      dbLicense = await db.get(
+        `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
+         FROM licenses l
+         LEFT JOIN subscriptions s ON l.subscription_id = s.id
+         WHERE l.id = ? AND l.status = 'active'`,
+        [terminal.license_id]
+      );
+    }
+  }
+
+  // --- PASSO 4: Se nao encontrou na DB ---
+  if (!dbLicense) {
     const payloadExpiry = new Date(expiryStr);
     if (payloadExpiry < now) {
       return { valid: false, error: "expired", expiry: expiryStr };
@@ -233,7 +246,6 @@ export async function validateLicense(licenseKey, machineId) {
   const dbExpiry = new Date(dbLicense.expiry);
   const dbPlan = dbLicense.plan || planFromPayload;
 
-  // Se a DB diz que expirou, bloqueia
   if (dbExpiry < now) {
     return {
       valid: false,
@@ -243,13 +255,51 @@ export async function validateLicense(licenseKey, machineId) {
     };
   }
 
-  // Se a subscricao foi cancelada/revogada
   if (dbLicense.sub_status === 'cancelled' || dbLicense.sub_status === 'revoked') {
     return { valid: false, error: "revoked" };
   }
 
+  // --- PASSO 5.1: Lógica do MULTICAIXA ---
+  const isPrimaryMachine = dbLicense.machine_id === machineId;
+  let isValidTerminal = isPrimaryMachine;
+
+  if (!isValidTerminal) {
+    // Verifica se este PC já está registado como terminal secundário
+    const existingTerminal = await db.get(
+      `SELECT id FROM license_terminals WHERE license_id = ? AND machine_id = ?`,
+      [dbLicense.id, machineId]
+    );
+
+    if (existingTerminal) {
+      isValidTerminal = true;
+    } else {
+      // PC novo. Verifica se há vagas.
+      const terminalCount = await db.get(
+        `SELECT COUNT(*) as count FROM license_terminals WHERE license_id = ?`,
+        [dbLicense.id]
+      );
+      const maxTerminals = dbLicense.max_terminals || 1;
+
+      // O limite inclui o PC principal. Ex: max=2, primary=1, então pode ter +1 secundário.
+      if (terminalCount.count < (maxTerminals - 1)) {
+        const terminalId = uuidv4();
+        await db.run(
+          `INSERT INTO license_terminals (id, license_id, machine_id, created_at) VALUES (?, ?, ?, ?)`,
+          [terminalId, dbLicense.id, machineId, now.toISOString()]
+        );
+        isValidTerminal = true;
+        console.log(`[MULTICAIXA] Novo terminal registado: ${machineId} na licença ${dbLicense.id}`);
+      } else {
+        return {
+          valid: false,
+          error: "max_terminals_reached",
+          message: "Limite de computadores (caixas) para esta licença foi atingido."
+        };
+      }
+    }
+  }
+
   // --- PASSO 6: Gerar NOVA license key com dados atualizados ---
-  // Isso garante que o Flutter salve a nova key com expiry correto
   const newLicenseKey = generateLicenseKey(
     machineId,
     dbPlan,
@@ -257,7 +307,6 @@ export async function validateLicense(licenseKey, machineId) {
     dbLicense.subscription_id || subscriptionId
   );
 
-  // Atualizar last_validation
   await db.run(
     `UPDATE licenses SET last_validation = ? WHERE id = ?`,
     [now.toISOString(), dbLicense.id]
@@ -265,7 +314,6 @@ export async function validateLicense(licenseKey, machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
-  // Incluir custom_features na resposta para o Flutter ativar módulos
   let customFeatures = [];
   if (dbLicense.custom_features) {
     try {
@@ -289,16 +337,18 @@ export async function validateLicense(licenseKey, machineId) {
     client: dbLicense.client,
     clientName: dbLicense.client_name || null,
     paymentStatus: dbLicense.sub_status || "unknown",
+    maxTerminals: dbLicense.max_terminals || 1,
   };
 }
 
 // =========================================================
-// Buscar licenca ativa por machine_id
+// Buscar licenca ativa por machine_id (Com suporte a Multicaixa)
 // =========================================================
 export async function getLicenseByMachineId(machineId) {
   const db = await initDB();
 
-  const dbLicense = await db.get(
+  // Procura na tabela principal
+  let dbLicense = await db.get(
     `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
      FROM licenses l
      LEFT JOIN subscriptions s ON l.subscription_id = s.id
@@ -306,6 +356,23 @@ export async function getLicenseByMachineId(machineId) {
      ORDER BY l.created_at DESC LIMIT 1`,
     [machineId]
   );
+
+  // Se não encontrou, procura na tabela de terminais secundários
+  if (!dbLicense) {
+    const terminal = await db.get(
+      `SELECT license_id FROM license_terminals WHERE machine_id = ?`,
+      [machineId]
+    );
+    if (terminal) {
+      dbLicense = await db.get(
+        `SELECT l.*, s.status as sub_status, s.expiry_date as sub_expiry
+         FROM licenses l
+         LEFT JOIN subscriptions s ON l.subscription_id = s.id
+         WHERE l.id = ? AND l.status = 'active'`,
+        [terminal.license_id]
+      );
+    }
+  }
 
   if (!dbLicense) {
     return null;
@@ -315,7 +382,6 @@ export async function getLicenseByMachineId(machineId) {
   const dbExpiry = new Date(dbLicense.expiry);
   const isExpired = dbExpiry < now;
 
-  // Se expirou na DB, nao retorna licenca valida
   if (isExpired) {
     return {
       license: null,
@@ -328,7 +394,6 @@ export async function getLicenseByMachineId(machineId) {
     };
   }
 
-  // Gerar nova license key com dados atualizados
   const newLicenseKey = generateLicenseKey(
     machineId,
     dbLicense.plan,
@@ -338,7 +403,6 @@ export async function getLicenseByMachineId(machineId) {
 
   const daysRemaining = Math.ceil((dbExpiry - now) / (1000 * 60 * 60 * 24));
 
-  // Incluir custom_features na resposta
   let customFeatures = [];
   if (dbLicense.custom_features) {
     try {
@@ -361,6 +425,7 @@ export async function getLicenseByMachineId(machineId) {
     licenseId: dbLicense.id,
     features: getPlanFeatures(dbLicense.plan),
     custom_features: customFeatures,
+    maxTerminals: dbLicense.max_terminals || 1,
   };
 }
 
@@ -370,7 +435,7 @@ export async function getLicenseByMachineId(machineId) {
 export async function getLicenseStatusByMachineId(machineId) {
   const db = await initDB();
 
-  const dbLicense = await db.get(
+  let dbLicense = await db.get(
     `SELECT l.*, s.status as sub_status
      FROM licenses l
      LEFT JOIN subscriptions s ON l.subscription_id = s.id
@@ -378,6 +443,22 @@ export async function getLicenseStatusByMachineId(machineId) {
      ORDER BY l.created_at DESC LIMIT 1`,
     [machineId]
   );
+
+  if (!dbLicense) {
+    const terminal = await db.get(
+      `SELECT license_id FROM license_terminals WHERE machine_id = ?`,
+      [machineId]
+    );
+    if (terminal) {
+      dbLicense = await db.get(
+        `SELECT l.*, s.status as sub_status
+         FROM licenses l
+         LEFT JOIN subscriptions s ON l.subscription_id = s.id
+         WHERE l.id = ?`,
+        [terminal.license_id]
+      );
+    }
+  }
 
   if (!dbLicense) {
     return { exists: false };
@@ -398,6 +479,7 @@ export async function getLicenseStatusByMachineId(machineId) {
     clientName: dbLicense.client_name || null,
     subscriptionId: dbLicense.subscription_id,
     licenseId: dbLicense.id,
+    maxTerminals: dbLicense.max_terminals || 1,
   };
 }
 
@@ -447,8 +529,8 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
 
   await db.run(
     `INSERT INTO licenses (
-      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, machine_id, client, client_name, plan, subscription_id, expiry, status, created_at, last_validation, max_terminals
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       newLicenseId,
       newMachineId,
@@ -460,6 +542,7 @@ export async function transferLicense(oldLicenseId, newMachineId, reason) {
       "active",
       now.toISOString(),
       null,
+      oldLicense.max_terminals || 1
     ]
   );
 
@@ -603,9 +686,9 @@ export async function reactivateLicense(licenseId, newDays = null, newMachineId 
 }
 
 // =========================================================
-// EDITAR LICENCA
+// EDITAR LICENCA (Com suporte a maxTerminals)
 // =========================================================
-export async function updateLicense(licenseId, { plan, expiry, status, client, clientName, machineId }) {
+export async function updateLicense(licenseId, { plan, expiry, status, client, clientName, machineId, maxTerminals }) {
   const db = await initDB();
 
   const license = await db.get(`SELECT * FROM licenses WHERE id = ?`, [licenseId]);
@@ -622,6 +705,7 @@ export async function updateLicense(licenseId, { plan, expiry, status, client, c
   if (client !== undefined) { updates.push("client = ?"); values.push(client); }
   if (clientName !== undefined) { updates.push("client_name = ?"); values.push(clientName); }
   if (machineId !== undefined) { updates.push("machine_id = ?"); values.push(machineId); }
+  if (maxTerminals !== undefined) { updates.push("max_terminals = ?"); values.push(maxTerminals); }
 
   if (updates.length === 0) {
     throw new Error("no_fields_to_update");

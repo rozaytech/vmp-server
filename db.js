@@ -39,8 +39,6 @@ export async function initDB() {
     async run(sql, params = []) {
       const result = await turso.execute({ sql, args: params });
       
-      // CORREÇÃO BIGINT: O Turso devolve lastInsertRowid e rowsAffected como BigInt.
-      // Precisamos de os converter para Number para o Express conseguir fazer JSON.stringify.
       let safeLastID = result.lastInsertRowid ?? null;
       if (typeof safeLastID === 'bigint') {
         safeLastID = Number(safeLastID);
@@ -64,7 +62,6 @@ export async function initDB() {
       const row = result.rows[0];
       const obj = {};
       result.columns.forEach((col, i) => {
-        // CORREÇÃO BIGINT: Converter qualquer BigInt nas colunas para Number
         let val = row[i];
         if (typeof val === 'bigint') {
           val = Number(val);
@@ -81,7 +78,6 @@ export async function initDB() {
       return result.rows.map((row) => {
         const obj = {};
         result.columns.forEach((col, i) => {
-          // CORREÇÃO BIGINT: Converter qualquer BigInt nas colunas para Number
           let val = row[i];
           if (typeof val === 'bigint') {
             val = Number(val);
@@ -113,7 +109,8 @@ export async function initDB() {
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
       last_validation TEXT,
-      custom_features TEXT
+      custom_features TEXT,
+      max_terminals INTEGER DEFAULT 1
     );
   `);
 
@@ -145,6 +142,26 @@ export async function initDB() {
     await db.exec(`ALTER TABLE licenses ADD COLUMN client_name TEXT`);
     console.log('[MIGRATION v31] Adicionada coluna client_name a tabela licenses');
   }
+
+  // =========================================================
+  // MIGRATION v33: Multicaixa (max_terminals e tabela license_terminals)
+  // =========================================================
+  const hasMaxTerminals = licenseCols.some(col => col.name === 'max_terminals');
+  if (!hasMaxTerminals) {
+    await db.exec(`ALTER TABLE licenses ADD COLUMN max_terminals INTEGER DEFAULT 1`);
+    console.log('[MIGRATION v33] Adicionada coluna max_terminals a tabela licenses');
+  }
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS license_terminals (
+      id TEXT PRIMARY KEY,
+      license_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL UNIQUE,
+      terminal_name TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  // =========================================================
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (

@@ -186,8 +186,8 @@ export async function reactivate(req, res) {
 export async function update(req, res) {
   try {
     const { id } = req.params;
-    const { plan, status, expiry, client, clientName, machineId } = req.body;
-    const result = await updateLicense(id, { plan, status, expiry, client, clientName, machineId });
+    const { plan, status, expiry, client, clientName, machineId, maxTerminals } = req.body;
+    const result = await updateLicense(id, { plan, status, expiry, client, clientName, machineId, maxTerminals });
 
     // NOTIFICAÇÃO: Licença atualizada
     await sendDiscordNotification({
@@ -197,7 +197,8 @@ export async function update(req, res) {
       fields: [
         { name: 'Cliente / Empresa', value: clientName || 'Não alterado', inline: true },
         { name: 'Plano', value: plan || 'Não alterado', inline: true },
-        { name: 'Estado', value: status || 'Não alterado', inline: true }
+        { name: 'Estado', value: status || 'Não alterado', inline: true },
+        { name: 'Máx. Terminais', value: maxTerminals !== undefined ? maxTerminals.toString() : 'Não alterado', inline: true }
       ]
     });
 
