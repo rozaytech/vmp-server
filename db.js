@@ -38,9 +38,22 @@ export async function initDB() {
     // INSERT / UPDATE / DELETE
     async run(sql, params = []) {
       const result = await turso.execute({ sql, args: params });
+      
+      // CORREÇÃO BIGINT: O Turso devolve lastInsertRowid e rowsAffected como BigInt.
+      // Precisamos de os converter para Number para o Express conseguir fazer JSON.stringify.
+      let safeLastID = result.lastInsertRowid ?? null;
+      if (typeof safeLastID === 'bigint') {
+        safeLastID = Number(safeLastID);
+      }
+
+      let safeChanges = result.rowsAffected ?? 0;
+      if (typeof safeChanges === 'bigint') {
+        safeChanges = Number(safeChanges);
+      }
+
       return {
-        lastID: result.lastInsertRowid ?? null,
-        changes: result.rowsAffected ?? 0,
+        lastID: safeLastID,
+        changes: safeChanges,
       };
     },
 
@@ -51,7 +64,12 @@ export async function initDB() {
       const row = result.rows[0];
       const obj = {};
       result.columns.forEach((col, i) => {
-        obj[col] = row[i];
+        // CORREÇÃO BIGINT: Converter qualquer BigInt nas colunas para Number
+        let val = row[i];
+        if (typeof val === 'bigint') {
+          val = Number(val);
+        }
+        obj[col] = val;
       });
       return obj;
     },
@@ -63,7 +81,12 @@ export async function initDB() {
       return result.rows.map((row) => {
         const obj = {};
         result.columns.forEach((col, i) => {
-          obj[col] = row[i];
+          // CORREÇÃO BIGINT: Converter qualquer BigInt nas colunas para Number
+          let val = row[i];
+          if (typeof val === 'bigint') {
+            val = Number(val);
+          }
+          obj[col] = val;
         });
         return obj;
       });
